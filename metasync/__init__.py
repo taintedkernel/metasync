@@ -18,21 +18,27 @@ from metasync import MSManager
 @click.option('--strong_verify', default=False, type=bool, help='recomputes hashes to verify contents unchanged (guards against data corruption)')
 @click.option('--dedup', default=False, type=bool, help='enable deduplication detection')
 def scan(db, path, update, verify_all, strong_verify, dedup):
-#def scan(*args):
+    # A better way exists, but this works for the moment
     pnames = ('path', 'update', 'verify_all', 'strong_verify', 'dedup')
     args = (path, update, verify_all, strong_verify, dedup)
     params = dict(zip(pnames, args))
-    #mgr.init(db, path, update, verify_all, strong_verify, dedup)
     mgr.init(db, params)
+
+    # Run our "testsuite" on new databases
     if not hasattr(mgr, 'existing_files') or len(mgr.existing_files) == 0:
-        create_tmp = True
+        run_tests = True
     else:
-        create_tmp = False
+        run_tests = False
+
     mgr.scan_path()
-    if create_tmp:
-        mgr.create_temp_files()
+
+    if run_tests:
+        mgr.create_temp_rm_file()
+        mgr.create_temp_mv_file()
+        mgr.create_dupe_files()
 
 
+# Configure logging
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
 ch = logging.StreamHandler()
@@ -41,5 +47,7 @@ formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(messag
 ch.setFormatter(formatter)
 logger.addHandler(ch)
 
+# Load our manager
 mgr = MSManager()
+logger.info('manager loaded')
 

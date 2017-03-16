@@ -1,5 +1,3 @@
-#!/usr/bin/env python
-
 from sqlalchemy import Column, ForeignKey, Integer, String, UnicodeText, DateTime
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship, sessionmaker
@@ -7,6 +5,9 @@ from sqlalchemy import create_engine
 
 from datetime import datetime
 import time
+
+import tempfile
+import shutil
 
 import logging
 import hashlib
@@ -16,7 +17,7 @@ import re
 
 
 Base = declarative_base()
-logger = logging.getLogger(__name__)
+logger = logging.getLogger('metasync')
 
 class FileMissingError(Exception):
     pass
@@ -112,21 +113,6 @@ class MSFile(Base):
     # changes are not considered a change.
     #
     # Return True if contents modified, False otherwise
-    #
-    # Decision tree:
-    #
-    # file exists in same path:
-    #   mtime, size (+assume hash) modified - file saved, update by default
-    #   mtime modified - file saved with same data, update by default
-    # file missing:
-    #   mark as missing, reconcile with "new" files at the end
-    #
-    #
-    # - Check if mtime or size modified
-    #  - If changed (file was saved) then mark file
-    #      as "updated" and possibly update db info
-    #  - If size unchanged (file touched/saved with same data)
-    #
     #
     def visit(self, strong_verify=False):
         if not os.path.exists(self.filename):
@@ -227,51 +213,79 @@ class MSManager(object):
         Base.metadata.create_all(engine)
         Session = sessionmaker(bind=engine)
         self.sasession = Session()
+        self.options = options
 
         logger.info('reading file data from database')
         self.existing_files = self.sasession.query(MSFile).all()
-        # TODO: load ignore list from db
-        self.ignored_files = list()
+        self.ignored_files = list()  # TODO:load from file if new, otherwise db
         self.missing_files = list()
 
-        # TODO: make into some sort of options/args dict? (don't clutter global namespace)
-        #self.path = path
-        #self.update = update
-        #self.strong_verify = strong_verify
-        #self.verify_all = verify_all
-        #self.dedup = dedup
-        self.options = options
-
-        # Reconcile the DB data with on-disk bytes
+        # Reconcile the DB data with on-disk bits
         self.verify_files()
 
-
-    def create_temp_files(self):
-        logger.info('creating temp files')
-        import tempfile
-        #fn = os.path.join(self.path, uuid.uuid4())
+    #
+    # First test #
+    #
+    # Test missing file detection:
+    #  - Create new temp file in "path", add to DB, then remove
+    #
+    def create_temp_rm_file(self):
+        logger.info('running create_temp_rm_file test')
+        #fn = os.path.join(sel1f.path, uuid.uuid4())
         (tmpfile, tmpfn) = tempfile.mkstemp(dir=self.options['path'])
         os.write(tmpfile, os.urandom(1024))
         os.close(tmpfile)
-        logger.debug('created %s', tmpfn)
+        logger.debug('created, adding %s', tmpfn)
         self.add_file(tmpfn)
+        logger.debug('removing %s', tmpfn)
         os.unlink(tmpfn)
+        return tmpfn
+        # On next run, tmpfn should be detected as misssing
 
+    #
+    # Second test #
+    #
+    # Test moved file detection:
+    #  - Create new temp file in "path", then create subfolder, move temp file
+    #
+    def create_temp_mv_file(self):
+        logger.info('running create_temp_mv_file test')
         (tmpfile, tmpfn) = tempfile.mkstemp(dir=self.options['path'])
         os.write(tmpfile, os.urandom(1024))
         os.close(tmpfile)
         logger.debug('created %s', tmpfn)
         self.add_file(tmpfn)
-        if not os.path.exists(os.path.join(self.options['path'], 'tmpdir')):
-            tmp_path = os.mkdir(os.path.join(self.options['path'], 'tmpdir'))
-        import shutil
-        shutil.move(tmpfn, os.path.join(self.options['path'], 'tmpdir'))
+        tmpdir_path = os.path.join(self.options['path'], 'tmpdir')
+        if not os.path.exists(tmpdir_path):
+            tmp_path = os.mkdir(tmpdir_path)
+        logger.debug('moving %s to %s', tmpfn, tmpdir_path)
+        shutil.move(tmpfn, tmpdir_path)
+        # On next run, tmpfn2 should be
+        # detected as match for missing tmpfn
+
+    #
+    # Third test
+    #
+    # Dedupe functionality:
+    #  - Create new temp file in "path", copy to new temp file in same path
+    #
+    def create_dupe_files(self):
+        logger.info('running creating_dupe_files test')
+        (tmpfile, tmpfn) = tempfile.mkstemp(dir=self.options['path'])
+        os.write(tmpfile, os.urandom(1024))
+        os.close(tmpfile)
+        self.add_file(tmpfn)
+        (tmpfile2, tmpfn2) = tempfile.mkstemp(dir=self.options['path'])
+        os.close(tmpfile2)
+        logger.debug('created %s, copying to %s', tmpfn, tmpfn2)
+        shutil.copy(tmpfn, tmpfn2)
+        # On next run, if --dedup invoked tmpfn2 should be detected
 
 
     ### Verify internal list of known files ###
     def verify_files(self):
         if len(self.existing_files) == 0:
-            logger.info('database new or empty, skipping verification')
+            logger.info('database empty/new, skipping verification')
             return
 
         logger.info('verifying database')
@@ -318,15 +332,16 @@ class MSManager(object):
         for root, dirs, files in os.walk(self.options['path']):
             logger.debug('descending into %s: %d files, %d directories found', root, len(files), len(dirs))
             total_files += len(files)
+            l_files_parsed = 0
 
             for name in files:
                 if files_parsed % 10 == 0 and files_parsed > 0:
-                    logger.info('status: %d skipped, %d new, %d parsed, %d total', files_skipped, len(new_files), files_parsed, total_files)
+                    logger.debug('status: %d skipped, %d new, %d parsed, %d total (%2.0f%% complete)', files_skipped, len(new_files), files_parsed, total_files, l_files_parsed/float(len(files))*100)
 
                 filename = os.path.join(root, name)
                 logger.info('checking [%d/%d]: %s', files_parsed+1, total_files, filename)
 
-                existing_file = self.get_file_db(filename)
+                existing_file = self.get_db_file(filename)
                 if existing_file:
                     # TODO: files being visited twice, once on init with verify_db, and then now
                     # Fix by commenting out visit below()
@@ -334,19 +349,44 @@ class MSManager(object):
                     logger.info('file exists, skipping')
                     files_skipped += 1
                 else:
-                    logger.info('file is new, marking for addition')
+                    logger.info('file new, marking for addition')
                     new_files.append(filename)
 
                 files_parsed += 1
+                l_files_parsed += 1
 
         if new_files:
             logger.info('%d new files found, adding to database', len(new_files))
 
-        for filename in new_files:
-            # TODO: reconcile with self.missing
-            # TODO: support dedup by comparing metadata against existing files
-            if self.check_file_eligable(filename):
-                self.add_file(filename, delay_commit=True)
+        # Iterate through newly detected files
+        for new_fn in new_files:
+            # First, compare against missing list (file was moved)
+            if len(self.missing_files) > 0:
+                new_missing_files = self.scan_content_match(new_fn, self.missing_files)
+                if new_missing_files:
+                    (new_file, missing_file) = new_missing_files
+                    logger.warning('updating missing file %s to match new %s', missing_file, new_file)
+                    missing_file.filename = new_fn
+                    missing_file.mtime = new_file.mtime
+                    missing_file.ctime = new_file.ctime
+                    missing_file.last_visit = datetime.now()
+                    missing_file.status = 'found'
+                    missing_file.status = 'valid'
+                    self.sasession.add(missing_file)
+                    self.sasession.commit()
+                    continue
+
+            # Next, compare against existing known file data (file was copied/linked)
+            if self.options['dedup']:
+                new_dupe_files = self.scan_content_match(new_fn, self.existing_files)
+                if new_dupe_files:
+                    (new_file, dupe_file) = new_dupe_files
+                    logger.warning('new file %s detected as duplicate of %s, leaving to manual intervention', dupe_file, new_file)
+                    continue
+
+            # If no other match, then assume new
+            if self.check_file_eligable(new_fn):
+                self.add_file(new_fn, delay_commit=True)
 
         self.sasession.commit()
 
@@ -363,7 +403,7 @@ class MSManager(object):
 
 
     ### Check to see if file exists in DB ###
-    def get_file_db(self, file_path):
+    def get_db_file(self, file_path):
         # TODO: Do we scan DB directly instead of self.existing_files?
         filtered_files = sorted(filter(lambda x: x.filename == file_path, self.existing_files), key=lambda y: y.added_time)
         if len(filtered_files) == 0:
@@ -375,6 +415,33 @@ class MSManager(object):
             for f in filtered_files:
                 logger.error('  %s', f)
         return filtered_files.pop()
+
+
+    #
+    # Scan DB for any potential matches
+    #
+    # This will search for a match on "filename" with "source"
+    #
+    # Our logic currently will first look for matches on missing files
+    # Then, if no match and dedup is enabled we can search further
+    #   Both on existing, plus other new files
+    #
+    @staticmethod
+    def scan_content_match(filename, source):
+        new_file = MSFile(filename)
+        match = filter(lambda x: x.size == new_file.size and x.sha256 == new_file.sha256, source)
+        if len(match) == 0:
+            return None
+        elif len(match) == 1:
+            matched_file = match.pop()
+            logger.info('match for %s found against %s', filename, matched_file)
+            return (new_file, matched_file)
+        else:
+            logger.error('multiple files returned on match for %s, aborting', filename)
+            logger.error('matches:')
+            for f in match:
+                logger.error('  %s', f)
+            return None
 
 
     # Check if file is eligable for adding to DB
