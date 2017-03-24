@@ -22,10 +22,9 @@ TEST_LOG = 'test.log'
 @click.option('--path')
 @click.option('--dedup', default=False, type=bool)
 def metasync(db, path, dedup):
-    mgr = MSManager()
     options = {'path': path, 'dedup': dedup}
     logger.debug('options: %s', options)
-    mgr.init(db, options)
+    mgr = MSManager(db, options)
     mgr.scan_path()
     sys.exit(0)
 
@@ -62,7 +61,84 @@ def setup_func(runner):
 
 
 #
-# First test #
+# Test update metadata detection:
+#  - Create new temp file in "path", add to DB, then rewrite file with same data
+#    This will update mtime but leave sha256 the same, test this is detected correctly
+#
+def test_detect_updated_metadata():
+    logger.info('running detect_updated_metadata test')
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        (test_log_path, test_db_path, test_data_path, test_file_path) = setup_func(runner)
+
+        # Do our test operation
+        logger.debug('editing mock file %s', test_file_path)
+        with open(test_file_path, 'r+b') as f:
+            test_file_data = f.read(1024)
+            f.seek(0)
+            f.write(test_file_data)
+
+        # Test successful detection
+        logger.debug('reloading metasync')
+        result = runner.invoke(metasync, ['--db', test_db_path, '--path', test_data_path])
+        with open(test_log_path, 'r') as log_file_h:
+            test_log_data = ''.join(log_file_h.readlines())
+        logger.debug('result: %s', result)
+
+        mtime_mod_msg = '^.*%s.*mtime modified.*$' % (test_file_path)
+        data_same_msg = '^.*%s.*detected as updated but contents unchanged.*$' % (test_file_path)
+        mtime_mod_re = re.compile(mtime_mod_msg, re.M)
+        data_same_re = re.compile(data_same_msg, re.M)
+        #logger.debug('searching for message: %s', file_missing_msg)
+        #logger.debug('searching for message: %s', match_found_msg)
+        #logger.debug('test log data: %s', test_log_data)
+        assert result.exit_code == 0
+        assert not any(map(lambda x: x in test_log_data, ['ERROR', 'CRITICAL']))
+        assert re.search(mtime_mod_re, test_log_data)
+        assert re.search(data_same_re, test_log_data)
+        assert 'verification completed, all files accounted for' in test_log_data
+        logger.info('test passed')
+
+
+#
+# Test update metadata detection:
+#  - Create new temp file in "path", add to DB, then rewrite file with same data
+#    This will update mtime but leave sha256 the same, test this is detected correctly
+#
+def test_detect_updated_data():
+    logger.info('running detect_updated_data test')
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        (test_log_path, test_db_path, test_data_path, test_file_path) = setup_func(runner)
+
+        # Do our test operation
+        logger.debug('editing mock file %s', test_file_path)
+        with open(test_file_path, 'r+b') as f:
+            f.seek(0)
+            f.write(os.urandom(1024))
+
+        # Test successful detection
+        logger.debug('reloading metasync')
+        result = runner.invoke(metasync, ['--db', test_db_path, '--path', test_data_path])
+        with open(test_log_path, 'r') as log_file_h:
+            test_log_data = ''.join(log_file_h.readlines())
+        logger.debug('result: %s', result)
+
+        mtime_mod_msg = '^.*%s.*mtime modified.*$' % (test_file_path)
+        data_updated_msg = '^.*%s.*contents updated to.*$' % (test_file_path)
+        mtime_mod_re = re.compile(mtime_mod_msg, re.M)
+        data_updated_re = re.compile(data_updated_msg, re.M)
+        #logger.debug('searching for message: %s', file_missing_msg)
+        #logger.debug('searching for message: %s', match_found_msg)
+        #logger.debug('test log data: %s', test_log_data)
+        assert result.exit_code == 0
+        assert not any(map(lambda x: x in test_log_data, ['ERROR', 'CRITICAL']))
+        assert re.search(mtime_mod_re, test_log_data)
+        assert re.search(data_updated_re, test_log_data)
+        assert 'verification completed, all files accounted for' in test_log_data
+        logger.info('test passed')
+
+
 #
 # Test missing file detection:
 #  - Create new temp file in "path", add to DB, then remove
@@ -89,11 +165,10 @@ def test_detect_missing_files():
         assert result.exit_code == 0
         assert not any(map(lambda x: x in test_log_data, ['ERROR', 'CRITICAL']))
         assert file_missing_msg in test_log_data
+        assert 'verification completed, 1 files missing' in test_log_data
         logger.info('test passed')
 
 
-#
-# Second test #
 #
 # Test moved file detection:
 #  - Create new temp file in "path", then create subfolder, move temp file
@@ -133,11 +208,10 @@ def test_detect_moved_files():
         assert file_missing_msg in test_log_data
         assert re.search(match_found_re, test_log_data)
         assert re.search(update_file_re, test_log_data)
+        assert 'verification completed, 1 files missing' in test_log_data
         logger.info('test passed')
 
 
-#
-# Third test
 #
 # Dedupe functionality:
 #  - Create new temp file in "path", copy to new temp file in same path
@@ -173,8 +247,8 @@ def test_create_dupe_files():
         assert 'duplicate file detected' in test_log_data
         assert re.search(new_dupe_re, test_log_data)
         assert re.search(existing_dupe_re, test_log_data)
+        assert 'verification completed, all files accounted for' in test_log_data
         logger.info('test passed')
-
 
 
 # Configure logging

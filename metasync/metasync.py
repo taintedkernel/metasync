@@ -4,7 +4,10 @@ from sqlalchemy.orm import relationship, sessionmaker
 from sqlalchemy import create_engine
 
 import click
-import click_log
+#import click_log
+
+try: import simplejson as json
+except ImportError: import json
 
 from datetime import datetime
 import time
@@ -31,6 +34,15 @@ class InvalidFileError(Exception):
 class NullHashError(Exception):
     pass
 
+class DefaultEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if hasattr(obj, 'to_json'):
+            return obj.to_json()
+        elif isinstance(obj, datetime):
+            return obj.strftime('%Y-%m-%d %H:%M:%S')
+        else:
+           return obj
+
 
 #######################
 ##### File object #####
@@ -46,8 +58,9 @@ class MSFile(Base):
     mtime = Column(DateTime)
     ctime = Column(DateTime)
     sha256 = Column(String(64), default=None)
-    added_time = Column(DateTime)
+    #added_time = Column(DateTime)
     last_visit = Column(DateTime)
+    #history
 
     # TODO: Do we really need functionality to specify a custom sha256?
     # Maybe in cases where we are trying to recover from corruption?
@@ -75,10 +88,24 @@ class MSFile(Base):
         self.ctime = self.get_ctime()
         self.size = self.get_size()
         self.last_visit = now
-        self.added_time = now
+        #self.added_time = now
 
     def __repr__(self):
-        return '<{0} sha256={1}>'.format(self.filename, self.sha256[:16])
+        #return '<{0} mtime={1} size={2} sha256={3} last_visit={4} added={5}>'\
+        #        .format(self.filename, self.mtime, self.size, self.sha256[:16],\
+        #                self.last_visit, self.added_time)
+        return '<File {0} name={1} mtime={2} size={3} sha256={4} last_visit={5}>'.format(self.id, self.filename, self.mtime.strftime('%Y-%m-%d %H:%M:%S'), self.size, self.sha256[:16], self.last_visit.strftime('%Y-%m-%d %H:%M:%S'))
+
+    def to_json(self):
+        serial = dict()
+        serial['filename'] = self.filename
+        serial['sha256'] = self.sha256
+        serial['size'] = self.size
+        serial['mtime'] = self.mtime.strftime('%Y-%m-%d %H:%M:%S')
+        serial['ctime'] = self.ctime.strftime('%Y-%m-%d %H:%M:%S')
+        #serial['added_time'] = self.added_time.strftime('%Y-%m-%d %H:%M:%S')
+        serial['last_visit'] = self.last_visit.strftime('%Y-%m-%d %H:%M:%S')
+        return json.dumps(serial)
 
     @property
     def file_name(self):
@@ -108,6 +135,10 @@ class MSFile(Base):
                 buf = f.read(blocksize)
             return hasher.hexdigest()
 
+    def show_history(self):
+        for h in self.history:
+            logger.debug('%s', h)
+
     #
     # Visit the file
     #
@@ -117,8 +148,6 @@ class MSFile(Base):
     #
     # Return True if contents modified, False otherwise
     #
-    @click_log.simple_verbosity_option()
-    @click_log.init(__name__)
     def visit(self, strong_verify=False):
         if not os.path.exists(self.filename):
             logger.warning('%s missing', self.filename)
@@ -131,12 +160,14 @@ class MSFile(Base):
 
         mtime = self.get_mtime()
         if mtime > self.last_visit:
-            modified['mtime'] = True
+            modified['mtime'] = mtime
             logger.info('%s mtime modified', self.filename)
+
+        self.last_visit = datetime.now()
 
         size = self.get_size()
         if size != self.size:
-            modified['size'] = True
+            modified['size'] = size
             logger.info('%s size modified', self.filename)
 
         #
@@ -146,7 +177,10 @@ class MSFile(Base):
         # TODO: Need logic to determine if completely new file.
         #   May need to prompt user.
         #
-        if any(modified.values()) or strong_verify:
+        # NOTE: We may want to move modifications to Manager class,
+        #   update_file_helper can be utilized
+        #
+        if len(modified) > 0 or strong_verify:
             sha256 = self.compute_sha256()
             if sha256 != self.sha256:
                 logger.info('%s contents updated to %s', self.filename, sha256)
@@ -154,25 +188,28 @@ class MSFile(Base):
                 if not any(modified.values()):
                     logger.fatal('possible data corruption on %s, contents changed without metadata change!', self.filename)
                     logger.error('manual investigation required, not updating database')
-                    return False
+                    return None
 
                 self.sha256 = sha256
-                return True
+                modified['sha256'] = sha256
+                return modified
+                #return True
             else:
-                logger.info('%s detected as updated but contents unchanged', self)
+                logger.info('%s detected as updated but contents unchanged, updating metadata', self)
+                return modified
 
-        return False
+        return None
 
 
     #
-    # Update the file
+    # Refresh the file
     #
     # This will update metadata about the file.
-    # Takes current information as new source-of-truth
+    # Takes current information as new source-of-truth.
     #
     # stong=True recomputes file contents in addition to metadata
     #
-    def update(self, strong=False):
+    def refresh(self, strong=False):
         self.ctime = self.get_ctime()
         self.mtime = self.get_mtime()
         self.size = self.get_size()
@@ -180,25 +217,57 @@ class MSFile(Base):
             self.sha256 = self.compute_sha256()
 
 
+    #
+    # Update the file
+    #
+    # This updates the file with data given in a dictionary
+    #
+    def update(self, data):
+        for k, v in data.iteritems():
+            setattr(self, k, v)
+
+
+############################
+##### Execution object #####
+############################
+
+class MSExecution(Base):
+    __tablename__ = 'execution'
+
+    id = Column(Integer, primary_key=True)
+    timestamp = Column(DateTime, nullable=False)
+    result = Column(String(64))
+
+    def __init__(self, ts=datetime.now()):
+        self.timestamp = ts
+
+
 ##########################
 ##### History object #####
 ##########################
 
-class MSHistory(object):
+class MSHistory(Base, json.JSONEncoder):
     __tablename__ = 'history'
 
     id = Column(Integer, primary_key=True)
-    file_id = Column(Integer, ForeignKey("files.id"), nullable=False)
-    field = Column(String(64), nullable=False)
-    value = Column(String(256), nullable=False)
+    file_id = Column(Integer, ForeignKey('files.id'))
+    file = relationship('MSFile', backref='history')
+    #filename = Column(Integer, ForeignKey("files.id"), nullable=False)
+    status = Column(String(64), nullable=False)
+    data = Column(String(1024), nullable=False)
     timestamp = Column(DateTime, nullable=False)
+    execution_id = Column(Integer, ForeignKey('execution.id'))
+    execution = relationship('MSExecution', backref='history')
 
-    def __init__(self, msfile, field, value, status='update', ts=datetime.now()):
-        self.file_id = msfile.id
-        self.field = field
-        self.value = value
+    def __init__(self, hfile, data, execution, status='update', ts=datetime.now()):
+        self.file = hfile
         self.status = status
+        self.data = data
         self.timestamp = ts
+        self.execution = execution
+
+    def __repr__(self):
+        return '<History {0} file={1} status={2} timestamp={3} execution={4} data={5}>'.format(self.id, self.file, self.status, self.timestamp, self.execution_id, self.data)
 
 
 ##########################
@@ -207,17 +276,13 @@ class MSHistory(object):
 
 class MSManager(object):
 
-    def __init__(self):
-        pass
-
-    # Namespace reasons, for the moment...
-    #def init(self, db, path, update, verify_all, strong_verify, dedup):
-    def init(self, db, options):
+    def __init__(self, db, options):
         logger.info('initializing database %s', db)
         engine = create_engine('sqlite:///%s' % db)
         Base.metadata.create_all(engine)
         Session = sessionmaker(bind=engine)
         self.sasession = Session()
+        self.execution = MSExecution()
         self.options = options
 
         logger.info('reading files from database')
@@ -227,10 +292,9 @@ class MSManager(object):
 
         # Reconcile the DB data with on-disk bits
         if len(self.existing_files) > 0:
-            return self.verify_files()
+            self.verify_files()
         else:
             logger.info('database empty/new, skipping verification')
-            return 0
 
 
     ### Verify internal list of known files ###
@@ -243,19 +307,27 @@ class MSManager(object):
 
         for msfile in verify_files:
             logger.debug('visiting [%d/%d] %s', files_scanned+1, len(verify_files), msfile.filename)
+
+            # Detect if any changes are made to file
+            # If so, update in DB and add history entry
             try:
-                result = msfile.visit(self.options.get('strong_verify', False))
+                modified = msfile.visit(self.options.get('strong_verify', False))
             # Mark files as missing but do not commit to DB yet
             except FileMissingError:
-                result = False
+                modified = False
                 msfile.status = 'missing'
                 self.missing_files.append(msfile)
 
-            if result:
-                self.sasession.add(msfile)
-                self.sasession.commit()
+            if modified:
+                new_history = MSHistory(msfile, json.dumps(modified, cls=DefaultEncoder), self.execution)
+                self.sasession.add(new_history)
 
+            msfile.show_history()
+            self.sasession.add(msfile)
             files_scanned += 1
+
+        # Commit last_update and other updates
+        self.sasession.commit()
 
         # TODO: do something with missing_files
         if len(self.missing_files) == 0:
@@ -292,9 +364,6 @@ class MSManager(object):
 
                 existing_file = self.get_db_file(filename)
                 if existing_file:
-                    # TODO: files being visited twice, once on init with verify_db, and then now
-                    # Fix by commenting out visit below()
-                    # existing_file.visit()
                     logger.info('file exists, skipping')
                     files_skipped += 1
                 else:
@@ -318,30 +387,39 @@ class MSManager(object):
                 if new_missing_files:
                     (new_file, missing_file) = new_missing_files
                     logger.warning('updating missing file %s to match new %s', missing_file, new_file)
-                    missing_file.filename = new_fn
-                    missing_file.mtime = new_file.mtime
-                    missing_file.ctime = new_file.ctime
-                    missing_file.last_visit = datetime.now()
-                    missing_file.status = 'found'
-                    missing_file.status = 'valid'
-                    self.sasession.add(missing_file)
-                    self.sasession.commit()
+
+                    # NOTE: We update file, new data calculated here and history generated
+                    if not self.options.get('dry', False):
+                        keys = ['filename', 'mtime', 'ctime', 'last_visit', 'status']
+                        values = [new_fn, new_file.mtime, new_file.ctime, datetime.now(), 'valid']
+                        data = dict(zip(keys, values))
+                        new_history = self.update_file_helper(missing_file, data)
+                        #new_history = missing_file.update(data)
+                        self.sasession.add(missing_file)
+                        self.sasession.add(new_history)
+                        #self.sasession.commit()
+                        missing_file.show_history()
+
                     continue
 
             # Next, compare against existing known file data (file was copied/linked)
+            # TODO: any reason we wouldn't want to do this always (asides from cost)?
             if self.options.get('dedup', False):
                 new_dupe_files = self.scan_content_match(new_fn, self.existing_files)
                 if new_dupe_files:
                     (new_file, dupe_file) = new_dupe_files
                     logger.warning('duplicate file detected:')
-                    logger.warning('  new file: %s', new_file)
-                    logger.warning('  existing file: %s ', dupe_file)
+                    logger.warning('  new file:      %s', new_file)
+                    logger.warning('  existing file: %s', dupe_file)
                     logger.warning('leaving to manual intervention')
+                    # TODO : add functionality for automatic handling
+                    #   and create necessary history entries
                     continue
 
             # If no other match, then assume new
             if self.check_file_eligable(new_fn):
-                self.add_file(new_fn, delay_commit=True)
+                if not self.options.get('dry', False):
+                    self.add_file(new_fn, delay_commit=True)
 
         self.sasession.commit()
 
@@ -350,8 +428,12 @@ class MSManager(object):
     def add_file(self, filepath, delay_commit=False):
         #logger.debug('adding new file at %s', filepath)
         new_file = MSFile(filepath)
-        logger.info('added %s', new_file)
         self.sasession.add(new_file)
+        self.sasession.flush()
+        new_history = MSHistory(new_file, new_file.to_json(), self.execution, status='new')
+        if not self.options.get('dry', False):
+            self.sasession.add(new_history)
+        logger.info('added %s', new_file)
         if not delay_commit:
             self.sasession.commit()
         self.existing_files.append(new_file)
@@ -360,7 +442,8 @@ class MSManager(object):
     ### Check to see if file exists in DB ###
     def get_db_file(self, file_path):
         # TODO: Do we scan DB directly instead of self.existing_files?
-        filtered_files = sorted(filter(lambda x: x.filename == file_path, self.existing_files), key=lambda y: y.added_time)
+        #filtered_files = sorted(filter(lambda x: x.filename == file_path, self.existing_files), key=lambda y: y.added_time)
+        filtered_files = filter(lambda x: x.filename == file_path, self.existing_files)
         if len(filtered_files) == 0:
             return None
         elif len(filtered_files) == 1:
@@ -370,6 +453,13 @@ class MSManager(object):
             for f in filtered_files:
                 logger.error('  %s', f)
         return filtered_files.pop()
+
+
+    ### Update a file and generate history object ###
+    def update_file_helper(self, msfile, data):
+        msfile.update(data)
+        new_history = MSHistory(msfile, json.dumps(data, cls=DefaultEncoder), self.execution)
+        return new_history
 
 
     #

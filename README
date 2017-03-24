@@ -7,10 +7,16 @@ propagation of filename and/or directory changes to different remote locations.
 It's particularly helpful in an rsync (or-similar)-based workflow in
 combination with relatively large amounts of data.
 
-The first use-case was to propagate updates via Lightroom from my photo
-collection to several rsync-based backups.  Any sort of semi-frequent file
-path updates will benefit from avoiding extra data transfer when syncing
-to an external location.
+The first use-case was to propagate updates done via Lightroom from a photo
+volume to several external rsync-based backups.  Any sort of semi-frequent
+file path updates will benefit from avoiding extra data transfer when syncing
+to an external location (backup/update time from O(n) to O(1) plus reducining/
+mostly-eliminating chance of read-errors since only metadata is modified,
+rather then actual file data)
+
+Other features include dedup functionality (on identical file data of course),
+history/transaction log for tracking changes and also optional bitrot
+detection.
 
 In terms of implementation, metasync keeps an internal database of files
 and attemps to determine changes over time through periodic invocation.  If
@@ -19,4 +25,28 @@ it may be difficult for the application to directly detect the correct
 solution, in which case it will skip, prompt, or abort - especially if lots
 of other similar changes were occuring in the same "snapshot" (time since last
 successful invocation).
+
+
+Functionality/modes-of-operation:
+
+1. Periodic sync on local source-of-truth filesystem data
+
+   This will detect and interally update any changes to files on disk.
+
+2. Reconcilation with external backup / mirror sync
+
+   When pointed to an external mirror, it will determine what changes
+   have not been propagated over and can generate a script which will
+   re-create these, or optionally perform the operation itself (if
+   write access is possible)
+
+3. Bitrot detection
+
+   Performs a forced read-and-recompute hashes for all files.  If any
+   data is detected as changed (without corresponding mtime update),
+   we can prompt user for action (maybe recompute hash a second time
+   to verify not a temporary read error).
+
+   If we have data stored within DB on external mirrors, we can prompt
+   user or attempt to recover data.
 
