@@ -20,12 +20,26 @@ TEST_LOG = 'test.log'
 @click.command()
 @click.option('--db')
 @click.option('--path')
+@click.option('--verify', default='recurse', type=click.Choice(['none', 'path', 'recurse', 'all']))
 @click.option('--dedup', default=False, type=bool)
-def metasync(db, path, dedup):
-    options = {'path': path, 'dedup': dedup}
+def ms_verify(db, path, verify, dedup):
+    options = {'path': path, 'verify': verify, 'dedup': dedup}
     logger.debug('options: %s', options)
     mgr = MSManager(db, options)
-    mgr.scan_path()
+    sys.exit(0)
+
+
+@click.command()
+@click.option('--db')
+@click.option('--path')
+@click.option('--verify', default='recurse', type=click.Choice(['none', 'path', 'recurse', 'all']))
+@click.option('--dedup', default=False, type=bool)
+def ms_add(db, path, verify, dedup):
+    options = {'path': path, 'verify': verify, 'dedup': dedup}
+    logger.debug('options: %s', options)
+    mgr = MSManager(db, options)
+    new_files = mgr.scan_new_files(path)
+    mgr.verify_add_new_files(new_files)
     sys.exit(0)
 
 
@@ -52,7 +66,8 @@ def setup_func(runner):
     os.close(test_file)
 
     logger.debug('loading metasync')
-    result = runner.invoke(metasync, ['--db', test_db_path, '--path', test_data_path])
+    #result = runner.invoke(metasync, ['--db', test_db_path, '--path', test_data_path])
+    result = runner.invoke(ms_add, ['--db', test_db_path, '--path', test_data_path])
     logger.debug('result: %s', result)
     assert result.exit_code == 0
     assert not any(map(lambda x: x in result.output, ['WARNING', 'ERROR', 'CRITICAL']))
@@ -80,7 +95,7 @@ def test_detect_updated_metadata():
 
         # Test successful detection
         logger.debug('reloading metasync')
-        result = runner.invoke(metasync, ['--db', test_db_path, '--path', test_data_path])
+        result = runner.invoke(ms_verify, ['--db', test_db_path, '--path', test_data_path])
         with open(test_log_path, 'r') as log_file_h:
             test_log_data = ''.join(log_file_h.readlines())
         logger.debug('result: %s', result)
@@ -119,7 +134,7 @@ def test_detect_updated_data():
 
         # Test successful detection
         logger.debug('reloading metasync')
-        result = runner.invoke(metasync, ['--db', test_db_path, '--path', test_data_path])
+        result = runner.invoke(ms_add, ['--db', test_db_path, '--path', test_data_path])
         with open(test_log_path, 'r') as log_file_h:
             test_log_data = ''.join(log_file_h.readlines())
         logger.debug('result: %s', result)
@@ -155,7 +170,7 @@ def test_detect_missing_files():
 
         # Test successful detection
         logger.debug('reloading metasync')
-        result = runner.invoke(metasync, ['--db', test_db_path, '--path', test_data_path])
+        result = runner.invoke(ms_verify, ['--db', test_db_path, '--path', test_data_path])
         with open(test_log_path, 'r') as log_file_h:
             test_log_data = ''.join(log_file_h.readlines())
         logger.debug('result: %s', result)
@@ -190,7 +205,7 @@ def test_detect_moved_files():
 
         # Test successful detection
         logger.debug('reloading metasync')
-        result = runner.invoke(metasync, ['--db', test_db_path, '--path', test_data_path])
+        result = runner.invoke(ms_add, ['--db', test_db_path, '--path', test_data_path])
         with open(test_log_path, 'r') as log_file_h:
             test_log_data = ''.join(log_file_h.readlines())
         logger.debug('result: %s', result)
@@ -230,7 +245,7 @@ def test_create_dupe_files():
 
         # Test successful detection
         logger.debug('reloading metasync')
-        result = runner.invoke(metasync, ['--db', test_db_path, '--path', test_data_path, '--dedup', True])
+        result = runner.invoke(ms_add, ['--db', test_db_path, '--path', test_data_path, '--dedup', True])
         with open(test_log_path, 'r') as log_file_h:
             test_log_data = ''.join(log_file_h.readlines())
         logger.debug('result: %s', result)

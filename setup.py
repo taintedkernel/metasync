@@ -8,11 +8,14 @@ setup(
     install_requires=[
         'sqlalchemy',
         'Click',
-        'click-log',
+        'python-dateutil',
         'nose'
     ],
     entry_points='''
         [console_scripts]
-        metasync=metasync:scan
+        ms_verify=metasync:verify
+        ms_show_history=metasync:show_history
+        ms_add_path=metasync:add_path
+        ms_add_mirror=metasync:add_mirror
     ''',
 )

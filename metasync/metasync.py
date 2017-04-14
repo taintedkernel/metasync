@@ -1,7 +1,7 @@
 from sqlalchemy import Column, ForeignKey, Integer, String, UnicodeText, DateTime
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship, sessionmaker
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, orm
 
 import click
 #import click_log
@@ -44,23 +44,21 @@ class DefaultEncoder(json.JSONEncoder):
            return obj
 
 
-#######################
-##### File object #####
-#######################
+###################
+### File object ###
+###################
 
 class MSFile(Base):
     __tablename__ = 'files'
 
     id = Column(Integer, primary_key=True)
     filename = Column(String(256), nullable=False, unique=True)
-    status = Column(String(64), default='valid')
+    status = Column(String(64), default='valid')  # valid, missing
     size = Column(Integer, default=0)
     mtime = Column(DateTime)
     ctime = Column(DateTime)
     sha256 = Column(String(64), default=None)
-    #added_time = Column(DateTime)
     last_visit = Column(DateTime)
-    #history
 
     # TODO: Do we really need functionality to specify a custom sha256?
     # Maybe in cases where we are trying to recover from corruption?
@@ -88,13 +86,15 @@ class MSFile(Base):
         self.ctime = self.get_ctime()
         self.size = self.get_size()
         self.last_visit = now
-        #self.added_time = now
 
     def __repr__(self):
         #return '<{0} mtime={1} size={2} sha256={3} last_visit={4} added={5}>'\
         #        .format(self.filename, self.mtime, self.size, self.sha256[:16],\
         #                self.last_visit, self.added_time)
-        return '<File {0} name={1} mtime={2} size={3} sha256={4} last_visit={5}>'.format(self.id, self.filename, self.mtime.strftime('%Y-%m-%d %H:%M:%S'), self.size, self.sha256[:16], self.last_visit.strftime('%Y-%m-%d %H:%M:%S'))
+        if self.added_time:
+            return '<File {0} name={1} mtime={2} size={3} sha256={4} added={6} last_visit={5}>'.format(self.id, self.filename, self.mtime.strftime('%Y-%m-%d %H:%M:%S'), self.size, self.sha256[:16], self.last_visit.strftime('%Y-%m-%d %H:%M:%S'), self.added_time.strftime('%Y-%m-%d %H:%M:%S'))
+        else:
+            return '<File {0} name={1} mtime={2} size={3} sha256={4} last_visit={5}>'.format(self.id, self.filename, self.mtime.strftime('%Y-%m-%d %H:%M:%S'), self.size, self.sha256[:16], self.last_visit.strftime('%Y-%m-%d %H:%M:%S'))
 
     def to_json(self):
         serial = dict()
@@ -103,7 +103,8 @@ class MSFile(Base):
         serial['size'] = self.size
         serial['mtime'] = self.mtime.strftime('%Y-%m-%d %H:%M:%S')
         serial['ctime'] = self.ctime.strftime('%Y-%m-%d %H:%M:%S')
-        #serial['added_time'] = self.added_time.strftime('%Y-%m-%d %H:%M:%S')
+        #if self.added_time:
+        #    serial['added_time'] = self.added_time.strftime('%Y-%m-%d %H:%M:%S')
         serial['last_visit'] = self.last_visit.strftime('%Y-%m-%d %H:%M:%S')
         return json.dumps(serial)
 
@@ -113,7 +114,24 @@ class MSFile(Base):
 
     @property
     def file_path(self):
-        return os.path.dirname(self.filename)
+        return os.path.join(os.path.dirname(self.filename), '')
+
+    # TODO: Still kinda broke, fix this
+    @property
+    def added_time(self):
+        if len(self.history) == 0:
+            return None
+        added_hist = filter(lambda x: x.status == 'new', self.history)
+        #logger.debug('in added_time, data=%s', added_hist)
+        return None
+        return datetime.now()
+    #    if len(added_hist) == 1:
+    #        return added_hist.pop().timestamp
+    #    elif len(added_hist) == 0:
+    #        logger.error('file %s has no \'new\' history, returning null added time', self)
+    #    elif len(added_hist) > 1:
+    #        logger.error('file %s has multiple \'new\' histories, returning null added time', self)
+    #    return None
 
     def get_size(self):
         return os.path.getsize(self.filename)
@@ -121,7 +139,7 @@ class MSFile(Base):
     def get_mtime(self):
         return datetime.fromtimestamp(os.path.getmtime(self.filename))
 
-    # We won't typically use this, but tracking regardless # # #
+    # We won't typically use this, but tracking regardless
     def get_ctime(self):
         return datetime.fromtimestamp(os.path.getctime(self.filename))
 
@@ -136,8 +154,20 @@ class MSFile(Base):
             return hasher.hexdigest()
 
     def show_history(self):
-        for h in self.history:
+        for h in sorted(self.history, key=lambda x:x.timestamp):
             logger.debug('%s', h)
+
+    def build_fn_diff(self, start):
+        logger.info('checking %s', self)
+        history = sorted(self.history, key=lambda x:x.timestamp)
+        for idx, hist in enumerate(history):
+            if hist.timestamp > start:
+                break
+        start_fn = history[max(idx-1,0)].data['filename']
+        current_fn = self.filename
+        if start_fn != current_fn:
+            logger.info('file %s previously named %s at %s', current_fn, start_fn, start)
+        return (current_fn, start_fn)
 
     #
     # Visit the file
@@ -177,27 +207,21 @@ class MSFile(Base):
         # TODO: Need logic to determine if completely new file.
         #   May need to prompt user.
         #
-        # NOTE: We may want to move modifications to Manager class,
-        #   update_file_helper can be utilized
-        #
         if len(modified) > 0 or strong_verify:
             sha256 = self.compute_sha256()
             if sha256 != self.sha256:
                 logger.info('%s contents updated to %s', self.filename, sha256)
 
-                if not any(modified.values()):
+                if len(modified) == 0:
                     logger.fatal('possible data corruption on %s, contents changed without metadata change!', self.filename)
                     logger.error('manual investigation required, not updating database')
                     return None
 
-                self.sha256 = sha256
-                modified['sha256'] = sha256
-                return modified
-                #return True
+                self.sha256 = modified['sha256'] = sha256
             else:
                 logger.info('%s detected as updated but contents unchanged, updating metadata', self)
-                return modified
 
+            return modified
         return None
 
 
@@ -227,9 +251,46 @@ class MSFile(Base):
             setattr(self, k, v)
 
 
-############################
-##### Execution object #####
-############################
+######################
+### Mirror objects ###
+######################
+
+class MSMirror(Base):
+    __tablename__ = 'mirror'
+
+    id = Column(Integer, primary_key=True)
+    mtype = Column(String(64), nullable=False)
+    host = Column(String(256), nullable=False, unique=True)
+    params = Column(String(256))
+    last_check = Column(DateTime)
+
+    def __init__(self, host, mtype):
+        self.host = host
+        self.mtype = mtype
+
+
+class MSMirrorFile(Base):
+    __tablename__ = 'mirror_files'
+
+    id = Column(Integer, primary_key=True)
+    file_id = Column(Integer, ForeignKey('files.id'))
+    file = relationship('MSFile', backref='mirrors')
+    mirror_id = Column(Integer, ForeignKey('mirror.id'))
+    mirror = relationship('MSMirror', backref='files')
+    filename = Column(String(256), nullable=False, unique=True)
+
+
+#
+# mirror
+# id=1, url=sftp://user:pass@my.pictures.com/
+#
+# files
+# id=1 fid=5 mid=1 filename=/username/pictures/img_0001.jpg
+#
+
+########################
+### Execution object ###
+########################
 
 class MSExecution(Base):
     __tablename__ = 'execution'
@@ -242,9 +303,9 @@ class MSExecution(Base):
         self.timestamp = ts
 
 
-##########################
-##### History object #####
-##########################
+######################
+### History object ###
+######################
 
 class MSHistory(Base, json.JSONEncoder):
     __tablename__ = 'history'
@@ -253,7 +314,7 @@ class MSHistory(Base, json.JSONEncoder):
     file_id = Column(Integer, ForeignKey('files.id'))
     file = relationship('MSFile', backref='history')
     #filename = Column(Integer, ForeignKey("files.id"), nullable=False)
-    status = Column(String(64), nullable=False)
+    status = Column(String(64), nullable=False)  # new, update
     data = Column(String(1024), nullable=False)
     timestamp = Column(DateTime, nullable=False)
     execution_id = Column(Integer, ForeignKey('execution.id'))
@@ -266,24 +327,29 @@ class MSHistory(Base, json.JSONEncoder):
         self.timestamp = ts
         self.execution = execution
 
+    # TODO: fix this ugly hack
+    @orm.reconstructor
+    def init_on_load(self):
+        self.data = json.loads(self.data)
+
     def __repr__(self):
         return '<History {0} file={1} status={2} timestamp={3} execution={4} data={5}>'.format(self.id, self.file, self.status, self.timestamp, self.execution_id, self.data)
 
 
-##########################
-##### Manager object #####
-##########################
+######################
+### Manager object ###
+######################
 
 class MSManager(object):
 
-    def __init__(self, db, options):
+    def __init__(self, db, params):
         logger.info('initializing database %s', db)
         engine = create_engine('sqlite:///%s' % db)
         Base.metadata.create_all(engine)
         Session = sessionmaker(bind=engine)
         self.sasession = Session()
         self.execution = MSExecution()
-        self.options = options
+        self.params = params
 
         logger.info('reading files from database')
         self.existing_files = self.sasession.query(MSFile).all()
@@ -291,17 +357,33 @@ class MSManager(object):
         self.missing_files = list()
 
         # Reconcile the DB data with on-disk bits
-        if len(self.existing_files) > 0:
-            self.verify_files()
-        else:
+        if len(self.existing_files) == 0:
             logger.info('database empty/new, skipping verification')
+            return
+
+        if not self.params.get('path'):
+            return
+
+        self.verify_files(self.params['path'])
 
 
     ### Verify internal list of known files ###
-    def verify_files(self):
+    def verify_files(self, path):
         logger.info('verifying database')
-        # TODO: handle option where we don't assume recursion
-        verify_files = filter(lambda x: self.options['path'] in x.file_path or self.options['verify_all'], self.existing_files)
+
+        if self.params.get('verify') == 'none':
+            logger.info('invoked with verify=none, skipping verification')
+            return
+        elif self.params.get('verify') == 'all' or not path:
+            verify_files = self.existing_files
+        elif self.params.get('verify') == 'path':
+            verify_files = filter(lambda x: os.path.samefile(path, x.file_path), self.existing_files)
+        elif self.params.get('verify') == 'recurse':
+            verify_files = filter(lambda x: path in x.file_path, self.existing_files)
+        else:
+            logger.error('invoked with invalid verify=%s, defaulting to all files', self.params.get('verify'))
+            verify_files = self.existing_files
+
         logger.info('%d total files found, %d to be scanned', len(self.existing_files), len(verify_files))
         files_scanned = 0
 
@@ -311,7 +393,7 @@ class MSManager(object):
             # Detect if any changes are made to file
             # If so, update in DB and add history entry
             try:
-                modified = msfile.visit(self.options.get('strong_verify', False))
+                modified = msfile.visit(self.params.get('strong_verify', False))
             # Mark files as missing but do not commit to DB yet
             except FileMissingError:
                 modified = False
@@ -329,7 +411,6 @@ class MSManager(object):
         # Commit last_update and other updates
         self.sasession.commit()
 
-        # TODO: do something with missing_files
         if len(self.missing_files) == 0:
             logger.info('verification completed, all files accounted for')
         else:
@@ -338,19 +419,29 @@ class MSManager(object):
         return len(self.missing_files)
 
 
+    ### Generate filename/path changes based upon previous timestamp ###
+    def build_diff(self, start, end):
+        logger.info('building diff between %s and %s', start, end)
+        for msfile in self.existing_files:
+            msfile.build_fn_diff(start)
+            #hist_idx = filter(lambda x:start <= x[1].timestamp and x[1].timestamp <= end, enumerate(sorted(msfile.history, key=lambda x:x.timestamp)))
+
+
     #
     # Scan a path
     #
     # - Search for new files
-    # - Verify existing files
     #
-    def scan_path(self):
-        logger.info('scanning path %s', self.options['path'])
+    def scan_new_files(self, path):
+        logger.info('scanning path %s', path)
         files_parsed = files_skipped = total_files = 0
         new_files = list()
         known_files = self.existing_files
 
-        for root, dirs, files in os.walk(self.options['path']):
+        # Walk through filesystem
+        # Iterate over files, checking if new or existing
+        # Store in a temporary array
+        for root, dirs, files in os.walk(path):
             logger.debug('descending into %s: %d files, %d directories found', root, len(files), len(dirs))
             total_files += len(files)
             l_files_parsed = 0
@@ -375,21 +466,25 @@ class MSManager(object):
 
         # Exit without commit if no new files found
         if not new_files:
-            return 0
+            return list()
 
-        logger.info('%d new files found, adding to database', len(new_files))
+        #logger.info('%d new files found, adding to database', len(new_files))
+        logger.info('%d new files found', len(new_files))
+        return new_files
 
-        # Iterate through newly detected files
+
+    # Iterate through newly detected files
+    # First, compare against missing list (file was moved)
+    # Then compare against existing known files (dedup detection, if enabled)
+    def verify_add_new_files(self, new_files):
         for new_fn in new_files:
-            # First, compare against missing list (file was moved)
             if len(self.missing_files) > 0:
                 new_missing_files = self.scan_content_match(new_fn, self.missing_files)
                 if new_missing_files:
                     (new_file, missing_file) = new_missing_files
                     logger.warning('updating missing file %s to match new %s', missing_file, new_file)
-
                     # NOTE: We update file, new data calculated here and history generated
-                    if not self.options.get('dry', False):
+                    if not self.params.get('dry', False):
                         keys = ['filename', 'mtime', 'ctime', 'last_visit', 'status']
                         values = [new_fn, new_file.mtime, new_file.ctime, datetime.now(), 'valid']
                         data = dict(zip(keys, values))
@@ -399,12 +494,11 @@ class MSManager(object):
                         self.sasession.add(new_history)
                         #self.sasession.commit()
                         missing_file.show_history()
-
                     continue
 
             # Next, compare against existing known file data (file was copied/linked)
             # TODO: any reason we wouldn't want to do this always (asides from cost)?
-            if self.options.get('dedup', False):
+            if self.params.get('dedup', False):
                 new_dupe_files = self.scan_content_match(new_fn, self.existing_files)
                 if new_dupe_files:
                     (new_file, dupe_file) = new_dupe_files
@@ -418,7 +512,7 @@ class MSManager(object):
 
             # If no other match, then assume new
             if self.check_file_eligable(new_fn):
-                if not self.options.get('dry', False):
+                if not self.params.get('dry', False):
                     self.add_file(new_fn, delay_commit=True)
 
         self.sasession.commit()
@@ -431,7 +525,7 @@ class MSManager(object):
         self.sasession.add(new_file)
         self.sasession.flush()
         new_history = MSHistory(new_file, new_file.to_json(), self.execution, status='new')
-        if not self.options.get('dry', False):
+        if not self.params.get('dry', False):
             self.sasession.add(new_history)
         logger.info('added %s', new_file)
         if not delay_commit:
@@ -501,3 +595,10 @@ class MSManager(object):
         # TODO: check other things here
         # If passes all, then good for adding
         return True
+
+
+    def add_mirror(self, host):
+        logger.info('adding mirror %s', host)
+        mirror = MSMirror(host, 'test')
+        self.sasession.add(mirror)
+        self.sasession.commit()
