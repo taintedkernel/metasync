@@ -1,6 +1,7 @@
 import tempfile
 import logging
 import shutil
+import time
 import sys
 import os
 import re
@@ -49,11 +50,11 @@ def ms_add(db, path, verify, dedup):
 #
 def setup_func(runner):
     test_log_path = os.path.join(os.getcwd(), TEST_LOG)
-    app_log = logging.getLogger('metasync')
     fh = logging.FileHandler(test_log_path)
     fh.setLevel(logging.DEBUG)
     formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
     fh.setFormatter(formatter)
+    app_log = logging.getLogger('metasync')
     app_log.addHandler(fh)
 
     test_db_path = os.path.join(os.getcwd(), TEST_DB)
@@ -88,6 +89,7 @@ def test_detect_updated_metadata():
 
         # Do our test operation
         logger.debug('editing mock file %s', test_file_path)
+        time.sleep(1)
         with open(test_file_path, 'r+b') as f:
             test_file_data = f.read(1024)
             f.seek(0)
@@ -117,8 +119,8 @@ def test_detect_updated_metadata():
 
 #
 # Test update metadata detection:
-#  - Create new temp file in "path", add to DB, then rewrite file with same data
-#    This will update mtime but leave sha256 the same, test this is detected correctly
+#  - Create new temp file in "path", add to DB, then rewrite file with random/new data
+#    This will update mtime and sha256, test this is detected correctly
 #
 def test_detect_updated_data():
     logger.info('running detect_updated_data test')
@@ -128,6 +130,7 @@ def test_detect_updated_data():
 
         # Do our test operation
         logger.debug('editing mock file %s', test_file_path)
+        time.sleep(1)
         with open(test_file_path, 'r+b') as f:
             f.seek(0)
             f.write(os.urandom(1024))
@@ -277,6 +280,8 @@ logger.addHandler(ch)
 
 
 if __name__ == '__main__':
+    test_detect_updated_metadata()
+    test_detect_updated_data()
     test_detect_missing_files()
     test_detect_moved_files()
     test_create_dupe_files()

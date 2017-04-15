@@ -189,6 +189,8 @@ class MSFile(Base):
         #    modified = True
 
         mtime = self.get_mtime()
+        #logger.debug('last visit: %s' % self.last_visit)
+        #logger.debug('mtime: %s' % mtime)
         if mtime > self.last_visit:
             modified['mtime'] = mtime
             logger.info('%s mtime modified', self.filename)
