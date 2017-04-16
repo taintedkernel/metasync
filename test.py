@@ -89,7 +89,7 @@ def test_detect_updated_metadata():
 
         # Do our test operation
         logger.debug('editing mock file %s', test_file_path)
-        time.sleep(1)
+        time.sleep(1)       # Help ensure timestamp comparison works
         with open(test_file_path, 'r+b') as f:
             test_file_data = f.read(1024)
             f.seek(0)
@@ -130,7 +130,7 @@ def test_detect_updated_data():
 
         # Do our test operation
         logger.debug('editing mock file %s', test_file_path)
-        time.sleep(1)
+        time.sleep(1)       # Help ensure timestamp comparison works
         with open(test_file_path, 'r+b') as f:
             f.seek(0)
             f.write(os.urandom(1024))

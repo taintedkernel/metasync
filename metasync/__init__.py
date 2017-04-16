@@ -105,13 +105,16 @@ def add_path(db, verify, strong_verify, path, dedup, dry):
 @click.option('--db', default=os.path.join(os.getcwd(), 'metasync.db'), help='location of database')
 #@click.option('--verify', default='recurse', type=click.Choice(['none', 'path', 'recurse', 'all']))
 #@click.option('--strong_verify', default=False, type=bool, help='recomputes hashes to verify contents unchanged (guards against data corruption)')
-@click.option('--path', help='root path for files to manage')
-@click.option('--dedup', default=False, type=bool, help='enable deduplication detection')
+#@click.option('--path', help='root path for files to manage')
+#@click.option('--dedup', default=False, type=bool, help='enable deduplication detection')
 @click.option('--dry', default=False, type=bool, help='dry run (no changes)')
-def add_mirror(host, connection, db, path, dedup, dry):
-    pnames = ('path', 'verify', 'strong_verify', 'dedup', 'dry')
+#def add_mirror(host, connection, db, path, dedup, dry):
+def add_mirror(host, connection, db, dry):
+    #pnames = ('path', 'verify', 'strong_verify', 'dedup', 'dry')
+    #args = (path, 'none', False, dedup, dry)
+    pnames = ('verify', 'strong_verify', 'dry')
     #args = (path, ctx.obj['verify'], ctx.obj['strong_verify'], dedup, dry)
-    args = (path, 'none', False, dedup, dry)
+    args = ('none', False, dry)
     params = dict(zip(pnames, args))
 
     # Load our manager

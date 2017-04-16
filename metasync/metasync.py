@@ -48,6 +48,7 @@ class DefaultEncoder(json.JSONEncoder):
 ### File object ###
 ###################
 
+# TODO subclass these to allow "root" files to be remote
 class MSFile(Base):
     __tablename__ = 'files'
 
@@ -173,8 +174,8 @@ class MSFile(Base):
     # Visit the file
     #
     # This is verification the file still exists at the
-    # same location, with the same contents.  Metadata
-    # changes are not considered a change.
+    # same location, with the same contents (unchanged).
+    # Metadata changes are not considered a change.
     #
     # Return True if contents modified, False otherwise
     #
@@ -261,14 +262,54 @@ class MSMirror(Base):
     __tablename__ = 'mirror'
 
     id = Column(Integer, primary_key=True)
-    mtype = Column(String(64), nullable=False)
-    host = Column(String(256), nullable=False, unique=True)
-    params = Column(String(256))
+    type = Column(String(64), nullable=False)
     last_check = Column(DateTime)
+
+    __mapper_args__ = {
+        'polymorphic_identity': 'mirror',
+        'polymorphic_on': type
+    }
 
     def __init__(self, host, mtype):
         self.host = host
         self.mtype = mtype
+
+    def walk(self, path):
+        pass
+
+
+class MSMirrorMountedFS(MSMirror):
+    __tablename__ = 'mirror_mountedfs'
+
+    id = Column(Integer, ForeignKey('mirror.id'), primary_key=True)
+
+    __mapper_args__ = {
+        'polymorphic_identity': 'mirror_fs',
+    }
+
+    def __init__(self, host, mtype):
+        super().__init(host, mtype)
+
+    def walk(self, path):
+        pass
+
+
+class MSMirrorSFTP(MSMirror):
+    __tablename__ = 'mirror_sftp'
+
+    id = Column(Integer, ForeignKey('mirror.id'), primary_key=True)
+    host = Column(String(256), nullable=False, unique=True)
+    params = Column(String(256))
+
+    __mapper_args__ = {
+        'polymorphic_identity': 'mirror_sftp',
+    }
+
+    def __init__(self, host, mtype):
+        super().__init(host, mtype)
+
+    def walk(self, path):
+        pass
 
 
 class MSMirrorFile(Base):
@@ -283,11 +324,21 @@ class MSMirrorFile(Base):
 
 
 #
+# mirror_sftp
+# id=1 host=sftp://user:pass@my.pictures.com/
+#
+# mirror_fs
+# id=2 host=/export/backup/newbackup/
+#
 # mirror
-# id=1, url=sftp://user:pass@my.pictures.com/
+# id=1 type=sftp
+# id=2 type=mountedfs
+#
+# mirrorfiles
+# id=1 file_id=1 mirror_id=1
 #
 # files
-# id=1 fid=5 mid=1 filename=/username/pictures/img_0001.jpg
+# id=1 filename=/username/pictures/img_0001.jpg
 #
 
 ########################
@@ -438,7 +489,7 @@ class MSManager(object):
         logger.info('scanning path %s', path)
         files_parsed = files_skipped = total_files = 0
         new_files = list()
-        known_files = self.existing_files
+        #known_files = self.existing_files
 
         # Walk through filesystem
         # Iterate over files, checking if new or existing
@@ -599,8 +650,9 @@ class MSManager(object):
         return True
 
 
-    def add_mirror(self, host):
+    def add_mirror(self, host, type='local'):
         logger.info('adding mirror %s', host)
-        mirror = MSMirror(host, 'test')
+        mirror = MSMirror(host, type)
         self.sasession.add(mirror)
         self.sasession.commit()
+
