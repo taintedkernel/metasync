@@ -8,8 +8,7 @@ import logging
 import sys
 import os
 
-#import MSManager
-from metasync import MSManager
+from manager import MSManager
 
 
 ### Having issues getting this working, will revisit later ###
@@ -138,4 +137,5 @@ formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(messag
 ch.setFormatter(formatter)
 logger.addHandler(ch)
 logger.info('logger initialized')
+
 
