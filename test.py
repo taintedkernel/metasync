@@ -54,7 +54,7 @@ def setup_func(runner):
     fh.setLevel(logging.DEBUG)
     formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
     fh.setFormatter(formatter)
-    app_log = logging.getLogger('metasync')
+    app_log = logging.getLogger()
     app_log.addHandler(fh)
 
     test_db_path = os.path.join(os.getcwd(), TEST_DB)

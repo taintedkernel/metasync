@@ -111,7 +111,8 @@ class MSFile(Base):
         if len(self.history) == 0:
             return None
         added_hist = filter(lambda x: x.status == 'new', self.history)
-        logger.debug('in added_time, data=%s', added_hist)
+        # displaying history is an issue, hits recursion limit #
+        #logger.debug('in added_time, data=%s', added_hist)
         return None
         return datetime.now()
     #    if len(added_hist) == 1:
