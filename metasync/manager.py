@@ -5,8 +5,10 @@ from sqlalchemy import create_engine, orm
 import click
 #import click_log
 
-try: import simplejson as json
-except ImportError: import json
+try:
+    import simplejson as json
+except ImportError:
+    import json
 
 from datetime import datetime
 import time
@@ -25,7 +27,7 @@ from mirror import MSMirror, MSMirrorMountedFS, MSMirrorSFTP, MSMirrorFile
 from main import Base, FileMissingError, InvalidFileError, NullHashError, DefaultEncoder
 
 
-logger = logging.getLogger('metasync')
+logger = logging.getLogger('manager')
 
 
 ########################
@@ -73,7 +75,8 @@ class MSHistory(Base, json.JSONEncoder):
         self.data = json.loads(self.data)
 
     def __repr__(self):
-        return '<History {0} file={1} status={2} timestamp={3} execution={4} data={5}>'.format(self.id, self.file, self.status, self.timestamp, self.execution_id, self.data)
+        return '<History {0} file={1} status={2} timestamp={3} execution={4} data={5}>'.format(
+            self.id, self.file, self.status, self.timestamp, self.execution_id, self.data)
 
 
 ######################
@@ -106,7 +109,6 @@ class MSManager(object):
 
         self.verify_files(self.params['path'])
 
-
     ### Verify internal list of known files ###
     def verify_files(self, path):
         logger.info('verifying database')
@@ -128,7 +130,7 @@ class MSManager(object):
         files_scanned = 0
 
         for msfile in verify_files:
-            logger.debug('visiting [%d/%d] %s', files_scanned+1, len(verify_files), msfile.filename)
+            logger.debug('visiting [%d/%d] %s', files_scanned + 1, len(verify_files), msfile.filename)
 
             # Detect if any changes are made to file
             # If so, update in DB and add history entry
@@ -158,14 +160,13 @@ class MSManager(object):
 
         return len(self.missing_files)
 
-
     ### Generate filename/path changes based upon previous timestamp ###
     def build_diff(self, start, end):
         logger.info('building diff between %s and %s', start, end)
         for msfile in self.existing_files:
             msfile.build_fn_diff(start)
-            #hist_idx = filter(lambda x:start <= x[1].timestamp and x[1].timestamp <= end, enumerate(sorted(msfile.history, key=lambda x:x.timestamp)))
-
+            #hist_idx = filter(lambda x:start <= x[1].timestamp and x[1].timestamp <= end,
+            #    enumerate(sorted(msfile.history, key=lambda x:x.timestamp)))
 
     #
     # Scan a path
@@ -188,10 +189,11 @@ class MSManager(object):
 
             for name in files:
                 if files_parsed % 10 == 0 and files_parsed > 0:
-                    logger.debug('status: %d skipped, %d new, %d parsed, %d total (%2.0f%% complete)', files_skipped, len(new_files), files_parsed, total_files, l_files_parsed/float(len(files))*100)
+                    logger.debug('status: %d skipped, %d new, %d parsed, %d total (%2.0f%% complete)',
+                                 files_skipped, len(new_files), files_parsed, total_files, l_files_parsed / float(len(files)) * 100)
 
                 filename = os.path.join(root, name)
-                logger.info('checking [%d/%d]: %s', files_parsed+1, total_files, filename)
+                logger.info('checking [%d/%d]: %s', files_parsed + 1, total_files, filename)
 
                 existing_file = self.get_db_file(filename)
                 if existing_file:
@@ -211,7 +213,6 @@ class MSManager(object):
         #logger.info('%d new files found, adding to database', len(new_files))
         logger.info('%d new files found', len(new_files))
         return new_files
-
 
     # Iterate through newly detected files
     # First, compare against missing list (file was moved)
@@ -257,7 +258,6 @@ class MSManager(object):
 
         self.sasession.commit()
 
-
     ### Add a file to DB ###
     def add_file(self, filepath, delay_commit=False):
         #logger.debug('adding new file at %s', filepath)
@@ -271,7 +271,6 @@ class MSManager(object):
         if not delay_commit:
             self.sasession.commit()
         self.existing_files.append(new_file)
-
 
     ### Check to see if file exists in DB ###
     def get_db_file(self, file_path):
@@ -288,13 +287,11 @@ class MSManager(object):
                 logger.error('  %s', f)
         return filtered_files.pop()
 
-
     ### Update a file and generate history object ###
     def update_file_helper(self, msfile, data):
         msfile.update(data)
         new_history = MSHistory(msfile, json.dumps(data, cls=DefaultEncoder), self.execution)
         return new_history
-
 
     #
     # Scan DB for any potential matches
@@ -322,7 +319,6 @@ class MSManager(object):
                 logger.error('  %s', f)
             return None
 
-
     # Check if file is eligable for adding to DB
     # Consists of several checks:
     #  - Is it in ignore list?
@@ -336,12 +332,8 @@ class MSManager(object):
         # If passes all, then good for adding
         return True
 
-
     def add_mirror(self, host, type='local'):
         logger.info('adding mirror %s', host)
         mirror = MSMirror(host, type)
         self.sasession.add(mirror)
         self.sasession.commit()
-
-
-

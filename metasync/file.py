@@ -5,8 +5,10 @@ from sqlalchemy import create_engine, orm
 import click
 #import click_log
 
-try: import simplejson as json
-except ImportError: import json
+try:
+    import simplejson as json
+except ImportError:
+    import json
 
 from datetime import datetime
 import time
@@ -23,7 +25,7 @@ import re
 from main import Base, FileMissingError, InvalidFileError, NullHashError, DefaultEncoder
 
 
-logger = logging.getLogger('metasync')
+logger = logging.getLogger('file')
 
 
 ###################
@@ -75,9 +77,13 @@ class MSFile(Base):
         #        .format(self.filename, self.mtime, self.size, self.sha256[:16],\
         #                self.last_visit, self.added_time)
         if self.added_time:
-            return '<File {0} name={1} mtime={2} size={3} sha256={4} added={6} last_visit={5}>'.format(self.id, self.filename, self.mtime.strftime('%Y-%m-%d %H:%M:%S'), self.size, self.sha256[:16], self.last_visit.strftime('%Y-%m-%d %H:%M:%S'), self.added_time.strftime('%Y-%m-%d %H:%M:%S'))
+            return '<File {0} name={1} mtime={2} size={3} sha256={4} added={6} last_visit={5}>'.format(
+                   self.id, self.filename, self.mtime.strftime('%Y-%m-%d %H:%M:%S'), self.size, self.sha256[:16],
+                   self.last_visit.strftime('%Y-%m-%d %H:%M:%S'), self.added_time.strftime('%Y-%m-%d %H:%M:%S'))
         else:
-            return '<File {0} name={1} mtime={2} size={3} sha256={4} last_visit={5}>'.format(self.id, self.filename, self.mtime.strftime('%Y-%m-%d %H:%M:%S'), self.size, self.sha256[:16], self.last_visit.strftime('%Y-%m-%d %H:%M:%S'))
+            return '<File {0} name={1} mtime={2} size={3} sha256={4} last_visit={5}>'.format(
+                   self.id, self.filename, self.mtime.strftime('%Y-%m-%d %H:%M:%S'), self.size, self.sha256[:16],
+                   self.last_visit.strftime('%Y-%m-%d %H:%M:%S'))
 
     def to_json(self):
         serial = dict()
@@ -105,7 +111,7 @@ class MSFile(Base):
         if len(self.history) == 0:
             return None
         added_hist = filter(lambda x: x.status == 'new', self.history)
-        #logger.debug('in added_time, data=%s', added_hist)
+        logger.debug('in added_time, data=%s', added_hist)
         return None
         return datetime.now()
     #    if len(added_hist) == 1:
@@ -137,16 +143,16 @@ class MSFile(Base):
             return hasher.hexdigest()
 
     def show_history(self):
-        for h in sorted(self.history, key=lambda x:x.timestamp):
+        for h in sorted(self.history, key=lambda x: x.timestamp):
             logger.debug('%s', h)
 
     def build_fn_diff(self, start):
         logger.info('checking %s', self)
-        history = sorted(self.history, key=lambda x:x.timestamp)
+        history = sorted(self.history, key=lambda x: x.timestamp)
         for idx, hist in enumerate(history):
             if hist.timestamp > start:
                 break
-        start_fn = history[max(idx-1,0)].data['filename']
+        start_fn = history[max(idx - 1, 0)].data['filename']
         current_fn = self.filename
         if start_fn != current_fn:
             logger.info('file %s previously named %s at %s', current_fn, start_fn, start)
@@ -209,7 +215,6 @@ class MSFile(Base):
             return modified
         return None
 
-
     #
     # Refresh the file
     #
@@ -225,7 +230,6 @@ class MSFile(Base):
         if strong:
             self.sha256 = self.compute_sha256()
 
-
     #
     # Update the file
     #
@@ -234,6 +238,3 @@ class MSFile(Base):
     def update(self, data):
         for k, v in data.iteritems():
             setattr(self, k, v)
-
-
-

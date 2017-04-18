@@ -2,18 +2,23 @@ from sqlalchemy.ext.declarative import declarative_base
 
 from datetime import datetime
 
-try: import simplejson as json
-except ImportError: import json
+try:
+    import simplejson as json
+except ImportError:
+    import json
 
 
 class FileMissingError(Exception):
     pass
 
+
 class InvalidFileError(Exception):
     pass
 
+
 class NullHashError(Exception):
     pass
+
 
 class DefaultEncoder(json.JSONEncoder):
     def default(self, obj):
@@ -22,9 +27,7 @@ class DefaultEncoder(json.JSONEncoder):
         elif isinstance(obj, datetime):
             return obj.strftime('%Y-%m-%d %H:%M:%S')
         else:
-           return obj
+            return obj
 
 
 Base = declarative_base()
-
-

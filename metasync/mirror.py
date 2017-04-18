@@ -5,8 +5,10 @@ from sqlalchemy import create_engine, orm
 import click
 #import click_log
 
-try: import simplejson as json
-except ImportError: import json
+try:
+    import simplejson as json
+except ImportError:
+    import json
 
 from datetime import datetime
 import time
@@ -23,7 +25,7 @@ import re
 from main import Base, FileMissingError, InvalidFileError, NullHashError, DefaultEncoder
 
 
-logger = logging.getLogger('metasync')
+logger = logging.getLogger('mirror')
 
 
 ######################
@@ -112,4 +114,3 @@ class MSMirrorFile(Base):
 # files
 # id=1 filename=/username/pictures/img_0001.jpg
 #
-

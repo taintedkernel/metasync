@@ -16,7 +16,8 @@ from manager import MSManager
 #@click.pass_context
 #@click.option('--db', default=os.path.join(os.getcwd(), 'metasync.db'), help='location of database')
 #@click.option('--verify', default='recurse', type=click.Choice(['none', 'path', 'recurse', 'all']))
-#@click.option('--strong_verify', default=False, type=bool, help='recomputes hashes to verify contents unchanged (guards against data corruption)')
+#@click.option('--strong_verify', default=False, type=bool,
+#              help='recomputes hashes to verify contents unchanged (guards against data corruption)')
 #def cli(ctx, db, verify, strong_verify):
 #    ctx.obj['db'] = db
 #    ctx.obj['verify'] = verify
@@ -27,7 +28,8 @@ from manager import MSManager
 @click.command()
 @click.option('--db', default=os.path.join(os.getcwd(), 'metasync.db'), help='location of database')
 @click.option('--verify', default='all', type=click.Choice(['none', 'path', 'recurse', 'all']))
-@click.option('--strong_verify', default=False, type=bool, help='recomputes hashes to verify contents unchanged (guards against data corruption)')
+@click.option('--strong_verify', default=False, type=bool,
+              help='recomputes hashes to verify contents unchanged (guards against data corruption)')
 @click.option('--path', help='root path for files to manage')
 @click.option('--dedup', default=False, type=bool, help='enable deduplication detection')
 @click.option('--dry', default=False, type=bool, help='dry run (no changes)')
@@ -42,7 +44,7 @@ def verify(db, verify, strong_verify, path, dedup, dry):
     params = dict(zip(pnames, args))
 
     # Load our manager
-    mgr = MSManager(db, params)
+    MSManager(db, params)
     logger.info('manager loaded')
 
     sys.exit(0)
@@ -54,7 +56,8 @@ def verify(db, verify, strong_verify, path, dedup, dry):
 @click.option('--db', default=os.path.join(os.getcwd(), 'metasync.db'), help='location of database')
 @click.option('--path', help='root path for files to manage')
 @click.option('--verify', default='all', type=click.Choice(['none', 'path', 'recurse', 'all']))
-@click.option('--strong_verify', default=False, type=bool, help='recomputes hashes to verify contents unchanged (guards against data corruption)')
+@click.option('--strong_verify', default=False, type=bool,
+              help='recomputes hashes to verify contents unchanged (guards against data corruption)')
 @click.option('--path', help='root path for files to manage')
 @click.option('--dedup', default=False, type=bool, help='enable deduplication detection')
 @click.option('--dry', default=False, type=bool, help='dry run (no changes)')
@@ -79,7 +82,8 @@ def show_history(start, end, db, path, verify, strong_verify, dedup, dry):
 @click.argument('path')
 @click.option('--db', default=os.path.join(os.getcwd(), 'metasync.db'), help='location of database')
 @click.option('--verify', default='recurse', type=click.Choice(['none', 'path', 'recurse', 'all']))
-@click.option('--strong_verify', default=False, type=bool, help='recomputes hashes to verify contents unchanged (guards against data corruption)')
+@click.option('--strong_verify', default=False, type=bool,
+              help='recomputes hashes to verify contents unchanged (guards against data corruption)')
 @click.option('--path', help='root path for files to manage')
 @click.option('--dedup', default=False, type=bool, help='enable deduplication detection')
 @click.option('--dry', default=False, type=bool, help='dry run (no changes)')
@@ -103,7 +107,8 @@ def add_path(db, verify, strong_verify, path, dedup, dry):
 @click.option('--connection', help='parameters to establish connection')
 @click.option('--db', default=os.path.join(os.getcwd(), 'metasync.db'), help='location of database')
 #@click.option('--verify', default='recurse', type=click.Choice(['none', 'path', 'recurse', 'all']))
-#@click.option('--strong_verify', default=False, type=bool, help='recomputes hashes to verify contents unchanged (guards against data corruption)')
+#@click.option('--strong_verify', default=False, type=bool,
+#              help='recomputes hashes to verify contents unchanged (guards against data corruption)')
 #@click.option('--path', help='root path for files to manage')
 #@click.option('--dedup', default=False, type=bool, help='enable deduplication detection')
 @click.option('--dry', default=False, type=bool, help='dry run (no changes)')
@@ -137,5 +142,3 @@ formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(messag
 ch.setFormatter(formatter)
 logger.addHandler(ch)
 logger.info('logger initialized')
-
-
