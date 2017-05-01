@@ -12,10 +12,6 @@ class FileMissingError(Exception):
     pass
 
 
-class InvalidFileError(Exception):
-    pass
-
-
 class NullHashError(Exception):
     pass
 

@@ -47,8 +47,6 @@ def verify(db, verify, strong_verify, path, dedup, dry):
     MSManager(db, params)
     logger.info('manager loaded')
 
-    sys.exit(0)
-
 
 @click.command()
 @click.argument('start')
@@ -89,7 +87,6 @@ def show_history(start, end, db, path, verify, strong_verify, dedup, dry):
 @click.option('--dry', default=False, type=bool, help='dry run (no changes)')
 def add_path(db, verify, strong_verify, path, dedup, dry):
     pnames = ('path', 'verify', 'strong_verify', 'dedup', 'dry')
-    #args = (path, ctx.obj['verify'], ctx.obj['strong_verify'], dedup, dry)
     args = (path, verify, strong_verify, dedup, dry)
     params = dict(zip(pnames, args))
 
@@ -99,34 +96,47 @@ def add_path(db, verify, strong_verify, path, dedup, dry):
 
     new_files = mgr.scan_new_files(path)
     mgr.verify_add_new_files(new_files)
-    sys.exit(0)
 
 
 @click.command()
 @click.argument('host')
-@click.option('--connection', help='parameters to establish connection')
+@click.option('--key', help='keyfile to connect to remote server')
 @click.option('--db', default=os.path.join(os.getcwd(), 'metasync.db'), help='location of database')
-#@click.option('--verify', default='recurse', type=click.Choice(['none', 'path', 'recurse', 'all']))
-#@click.option('--strong_verify', default=False, type=bool,
-#              help='recomputes hashes to verify contents unchanged (guards against data corruption)')
-#@click.option('--path', help='root path for files to manage')
-#@click.option('--dedup', default=False, type=bool, help='enable deduplication detection')
-@click.option('--dry', default=False, type=bool, help='dry run (no changes)')
-#def add_mirror(host, connection, db, path, dedup, dry):
-def add_mirror(host, connection, db, dry):
-    #pnames = ('path', 'verify', 'strong_verify', 'dedup', 'dry')
-    #args = (path, 'none', False, dedup, dry)
+def add_mirror(host, key, db):
     pnames = ('verify', 'strong_verify', 'dry')
-    #args = (path, ctx.obj['verify'], ctx.obj['strong_verify'], dedup, dry)
-    args = ('none', False, dry)
+    args = ('none', False, False)
     params = dict(zip(pnames, args))
 
     # Load our manager
     mgr = MSManager(db, params)
     logger.info('manager loaded')
 
-    mgr.add_mirror(host)
-    sys.exit(0)
+    credentials = {'key': key} if key else {}
+    mgr.add_mirror(host, credentials)
+
+
+@click.command()
+@click.argument('host')
+@click.option('--path', help='path to walk')
+@click.option('--db', default=os.path.join(os.getcwd(), 'metasync.db'), help='location of database')
+def walk_scan_mirror(host, path, db):
+    pnames = ('path', 'verify', 'strong_verify', 'dry')
+    args = (path, 'none', False, False)
+    params = dict(zip(pnames, args))
+
+    # Load our manager
+    mgr = MSManager(db, params)
+    logger.info('manager loaded')
+
+    mgr.walk_scan_mirror(host, path)
+    #mirror = mgr.get_mirror(host)
+    #mirror.connect()
+    #for mpath, mdirs, mfiles in mirror.walk(path):
+    #    for mfile in mfiles:
+    #        mfile_path = os.path.join(mpath, mfile)
+    #        size = mirror.get_size(mfile_path)
+    #        mtime = mirror.get_mtime(mfile_path)
+    #        logger.info('found mirror file %s, size %d, time %s', mfile, size, mtime)
 
 
 def mirror_sync(db, path, verify_all):
@@ -134,7 +144,8 @@ def mirror_sync(db, path, verify_all):
 
 
 # Configure logging
-logger = logging.getLogger(__name__)
+# using __name__ prevents logs in other files from displaying
+logger = logging.getLogger()
 logger.setLevel(logging.DEBUG)
 ch = logging.StreamHandler()
 ch.setLevel(logging.DEBUG)
@@ -142,3 +153,4 @@ formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(messag
 ch.setFormatter(formatter)
 logger.addHandler(ch)
 logger.info('logger initialized')
+

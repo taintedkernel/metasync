@@ -17,17 +17,16 @@ import tempfile
 import shutil
 
 import logging
-import hashlib
 import sys
 import os
 import re
 
 from file import MSFile
-from mirror import MSMirror, MSMirrorMountedFS, MSMirrorSFTP, MSMirrorFile
-from main import Base, FileMissingError, InvalidFileError, NullHashError, DefaultEncoder
+from mirror import build_mirror, MSMirror, MSMirrorFS, MSMirrorSFTP, MSMirrorFile
+from main import Base, FileMissingError, NullHashError, DefaultEncoder
 
 
-logger = logging.getLogger('manager')
+logger = logging.getLogger(__name__)
 
 
 ########################
@@ -220,7 +219,7 @@ class MSManager(object):
     def verify_add_new_files(self, new_files):
         for new_fn in new_files:
             if len(self.missing_files) > 0:
-                new_missing_files = self.scan_content_match(new_fn, self.missing_files)
+                new_missing_files = self.scan_dup_content_match(new_fn, self.missing_files)
                 if new_missing_files:
                     (new_file, missing_file) = new_missing_files
                     logger.warning('updating missing file %s to match new %s', missing_file, new_file)
@@ -240,7 +239,7 @@ class MSManager(object):
             # Next, compare against existing known file data (file was copied/linked)
             # TODO: any reason we wouldn't want to do this always (asides from cost)?
             if self.params.get('dedup', False):
-                new_dupe_files = self.scan_content_match(new_fn, self.existing_files)
+                new_dupe_files = self.scan_dup_content_match(new_fn, self.existing_files)
                 if new_dupe_files:
                     (new_file, dupe_file) = new_dupe_files
                     logger.warning('duplicate file detected:')
@@ -303,7 +302,7 @@ class MSManager(object):
     #   Both on existing, plus other new files
     #
     @staticmethod
-    def scan_content_match(filename, source):
+    def scan_dup_content_match(filename, source):
         new_file = MSFile(filename)
         match = filter(lambda x: x.size == new_file.size and x.sha256 == new_file.sha256 and x.filename != new_file.filename, source)
         if len(match) == 0:
@@ -319,6 +318,21 @@ class MSManager(object):
                 logger.error('  %s', f)
             return None
 
+    #
+    # Scan DB for matches on existing files (only metadata)
+    #
+    # This will be used by mirror logic to scan any new files
+    # on a mirror to known existing files in the database
+    #
+    # Used when adding new mirrors, to match files that have
+    # already been copied.  Only match on identical sizes by
+    # default.  If same filename but different size, do not
+    # count as match.
+    #
+    def scan_existing_meta_match(self, filename, size):
+        match = filter(lambda x: x.filename == filename and x.size == size, self.existing_files)
+        return match
+
     # Check if file is eligable for adding to DB
     # Consists of several checks:
     #  - Is it in ignore list?
@@ -332,8 +346,44 @@ class MSManager(object):
         # If passes all, then good for adding
         return True
 
-    def add_mirror(self, host, type='local'):
-        logger.info('adding mirror %s', host)
-        mirror = MSMirror(host, type)
-        self.sasession.add(mirror)
-        self.sasession.commit()
+    ### Mirror functions ###
+    # Pull mirror from DB
+    def get_mirror(self, host):
+        mirror = self.sasession.query(MSMirror).filter(MSMirror.url == host).first()
+        return mirror
+
+    # Add a mirror to DB
+    def add_mirror(self, location, params=None):
+        logger.info('adding mirror %s', location)
+        mirror = build_mirror(location, params)
+
+        if mirror.connect():
+            self.sasession.add(mirror)
+            self.sasession.commit()
+        else:
+            logger.error('unable to connect to mirror, aborting add')
+
+    # Walk through mirror and scan files
+    # Look for matches to existing files
+    # Test on filename, size.
+    # TODO: Plan out if we want to verify hashes
+    # (this would be expensive, involving download
+    # of all data from mirror and storing in a
+    # temporary location to compute data)
+    def walk_scan_mirror(self, host, path):
+        mirror = self.get_mirror(host)
+        if not mirror.connect():
+            logger.error('unable to connect, aborting')
+            return
+
+        for mpath, mdirs, mfiles in mirror.walk(path):
+            for mfile in mfiles:
+                mfile_path = os.path.join(mpath, mfile)
+                size = mirror.get_size(mfile_path)
+                mtime = mirror.get_mtime(mfile_path)
+                logger.info('found mirror file %s, size %d, time %s', mfile_path, size, mtime)
+
+                db_matches = self.scan_existing_meta_match(mfile_path, size)
+                logger.info('match on existing files: %s', db_matches)
+
+

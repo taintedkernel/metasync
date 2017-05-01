@@ -1,3 +1,4 @@
+import multiprocessing
 import tempfile
 import logging
 import shutil
@@ -9,7 +10,7 @@ import re
 import click
 from click.testing import CliRunner
 
-from metasync import MSManager
+from metasync.manager import MSManager
 
 
 # Constants #
@@ -44,19 +45,53 @@ def ms_add(db, path, verify, dedup):
     sys.exit(0)
 
 
+@click.command()
+@click.argument('host')
+@click.option('--key', default=None, help='keyfile to connect to remote server')
+@click.option('--db', default=os.path.join(os.getcwd(), 'metasync.db'), help='location of database')
+#@click.option('--verify', default='recurse', type=click.Choice(['none', 'path', 'recurse', 'all']))
+#@click.option('--path', help='root path for files to manage')
+def ms_add_mirror(host, key, db):
+    #pnames = ('path', 'verify', 'strong_verify', 'dedup', 'dry')
+    #args = (path, 'none', False, dedup, dry)
+    pnames = ('verify', 'strong_verify', 'dry')
+    #args = (path, ctx.obj['verify'], ctx.obj['strong_verify'], dedup, dry)
+    args = ('none', False, False)
+    params = dict(zip(pnames, args))
+
+    # Load our manager
+    mgr = MSManager(db, params)
+    logger.info('manager loaded')
+
+    mgr.add_mirror(host, {'key': key})
+
+
+### Helper functions ###
+
+#
+# Setup and run FTP server
+#
+def setup_ftpd(path):
+    from pyftpdlib.authorizers import DummyAuthorizer
+    from pyftpdlib.handlers import FTPHandler
+    from pyftpdlib.servers import FTPServer
+
+    authorizer = DummyAuthorizer()
+    authorizer.add_anonymous(path)
+
+    handler = FTPHandler
+    handler.authorizer = authorizer
+
+    logger.info('invoking pyftpdlib on path %s', path)
+    server = FTPServer(("127.0.0.1", 2121), handler)
+    server.serve_forever()
+
+
 #
 # Configure app logging to file (to read from later)
 # Create mock data files
 #
-def setup_func(runner):
-    test_log_path = os.path.join(os.getcwd(), TEST_LOG)
-    fh = logging.FileHandler(test_log_path)
-    fh.setLevel(logging.DEBUG)
-    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-    fh.setFormatter(formatter)
-    app_log = logging.getLogger()
-    app_log.addHandler(fh)
-
+def setup_log_mock_data(runner, invoke=True):
     test_db_path = os.path.join(os.getcwd(), TEST_DB)
     test_data_path = os.path.join(os.getcwd(), 'files')
     logger.debug('creating mock file data')
@@ -66,15 +101,18 @@ def setup_func(runner):
     os.write(test_file, os.urandom(1024))
     os.close(test_file)
 
-    logger.debug('loading metasync')
-    #result = runner.invoke(metasync, ['--db', test_db_path, '--path', test_data_path])
-    result = runner.invoke(ms_add, ['--db', test_db_path, '--path', test_data_path])
-    logger.debug('result: %s', result)
-    assert result.exit_code == 0
-    assert not any(map(lambda x: x in result.output, ['WARNING', 'ERROR', 'CRITICAL']))
+    if invoke:
+        logger.debug('loading metasync')
+        #result = runner.invoke(metasync, ['--db', test_db_path, '--path', test_data_path])
+        result = runner.invoke(ms_add, ['--db', test_db_path, '--path', test_data_path])
+        logger.debug('result: %s', result)
+        assert result.exit_code == 0
+        assert not any(map(lambda x: x in result.output, ['WARNING', 'ERROR', 'CRITICAL']))
 
-    return (test_log_path, test_db_path, test_data_path, test_file_path)
+    return (test_db_path, test_data_path, test_file_path)
 
+
+### Unit tests ###
 
 #
 # Test update metadata detection:
@@ -85,7 +123,7 @@ def test_detect_updated_metadata():
     logger.info('running detect_updated_metadata test')
     runner = CliRunner()
     with runner.isolated_filesystem():
-        (test_log_path, test_db_path, test_data_path, test_file_path) = setup_func(runner)
+        (test_db_path, test_data_path, test_file_path) = setup_log_mock_data(runner)
 
         # Do our test operation
         logger.debug('editing mock file %s', test_file_path)
@@ -126,7 +164,7 @@ def test_detect_updated_data():
     logger.info('running detect_updated_data test')
     runner = CliRunner()
     with runner.isolated_filesystem():
-        (test_log_path, test_db_path, test_data_path, test_file_path) = setup_func(runner)
+        (test_db_path, test_data_path, test_file_path) = setup_log_mock_data(runner)
 
         # Do our test operation
         logger.debug('editing mock file %s', test_file_path)
@@ -165,7 +203,7 @@ def test_detect_missing_files():
     logger.info('running detect_missing_files test')
     runner = CliRunner()
     with runner.isolated_filesystem():
-        (test_log_path, test_db_path, test_data_path, test_file_path) = setup_func(runner)
+        (test_db_path, test_data_path, test_file_path) = setup_log_mock_data(runner)
 
         # Do our test operation
         logger.debug('removing mock file')
@@ -195,7 +233,7 @@ def test_detect_moved_files():
     logger.info('running detect_moved_file test')
     runner = CliRunner()
     with runner.isolated_filesystem():
-        (test_log_path, test_db_path, test_data_path, test_file_path) = setup_func(runner)
+        (test_db_path, test_data_path, test_file_path) = setup_log_mock_data(runner)
 
         # Do our test operation
         tmp_path = os.path.join(test_data_path, 'tmpdir')
@@ -238,7 +276,7 @@ def test_create_dupe_files():
     logger.info('running create_dupe_files test')
     runner = CliRunner()
     with runner.isolated_filesystem():
-        (test_log_path, test_db_path, test_data_path, test_file_path) = setup_func(runner)
+        (test_db_path, test_data_path, test_file_path) = setup_log_mock_data(runner)
 
         # Do our test operation
         (test_file2, test_file2_path) = tempfile.mkstemp(dir=test_data_path)
@@ -269,14 +307,48 @@ def test_create_dupe_files():
         logger.info('test passed')
 
 
+#
+# Test FTP client
+#
+def test_ftp_connect():
+    logger.info('running test_ftp_connect')
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        (test_db_path, test_data_path, test_file_path) = setup_log_mock_data(runner, invoke=False)
+        ftpd = multiprocessing.Process(target=setup_ftpd, args=(test_data_path,))
+        logger.info('spawning ftp server')
+        ftpd.start()
+
+        time.sleep(2)
+        logger.debug('loading metasync')
+        result = runner.invoke(ms_add_mirror, ['ftp://localhost:2121', '--db', test_db_path])
+        logger.debug('result: %s', result)
+        try:
+            assert result.exit_code == 0
+            assert not any(map(lambda x: x in result.output, ['WARNING', 'ERROR', 'CRITICAL']))
+        finally:
+            logger.info('shutting down ftp server')
+            ftpd.terminate()
+            ftpd.join()
+
+
 # Configure logging
-logger = logging.getLogger(__name__)
+logger = logging.getLogger()
 logger.setLevel(logging.DEBUG)
 ch = logging.StreamHandler()
 ch.setLevel(logging.DEBUG)
 formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 ch.setFormatter(formatter)
 logger.addHandler(ch)
+
+# We also log to file so the tests can read log messages
+# and verify functionality.  Not an ideal way, but works
+# and better then nothing!
+test_log_path = os.path.join(os.getcwd(), TEST_LOG)
+fh = logging.FileHandler(test_log_path)
+fh.setLevel(logging.DEBUG)
+fh.setFormatter(formatter)
+logger.addHandler(fh)
 
 
 if __name__ == '__main__':

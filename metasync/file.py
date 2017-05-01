@@ -22,10 +22,19 @@ import sys
 import os
 import re
 
-from main import Base, FileMissingError, InvalidFileError, NullHashError, DefaultEncoder
+from main import Base, FileMissingError, NullHashError, DefaultEncoder
 
 
-logger = logging.getLogger('file')
+logger = logging.getLogger(__name__)
+
+
+class InvalidFileError(Exception):
+    def __init__(self, filename):
+        super(Exception, self).__init__(filename)
+        self.filename = filename
+
+    def __str__(self):
+         return "File {0} not found".format(self.filename)
 
 
 ###################
@@ -52,7 +61,7 @@ class MSFile(Base):
     def __init__(self, filename, sha256=None, verify_exist=True, compute_hash=True):
         if verify_exist:
             if not os.path.exists(filename):
-                raise InvalidFileError
+                raise InvalidFileError(filename)
 
         self.filename = filename
 

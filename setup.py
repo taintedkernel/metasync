@@ -9,13 +9,18 @@ setup(
         'sqlalchemy',
         'Click',
         'python-dateutil',
-        'nose'
+        'nose',
+        'paramiko',
+        'sqlalchemy_jsonfield',
+        'pyftpdlib',
+        'dateparser'
     ],
     entry_points='''
         [console_scripts]
-        ms_verify=metasync:verify
-        ms_show_history=metasync:show_history
-        ms_add_path=metasync:add_path
-        ms_add_mirror=metasync:add_mirror
+        ms_verify=metasync.cli:verify
+        ms_show_history=metasync.cli:show_history
+        ms_add_path=metasync.cli:add_path
+        ms_add_mirror=metasync.cli:add_mirror
+        ms_walk_scan_mirror=metasync.cli:walk_scan_mirror
     ''',
 )
