@@ -152,10 +152,12 @@ class MSManager(object):
         # Commit last_update and other updates
         self.sasession.commit()
 
+        ### UNIT TEST ###
         if len(self.missing_files) == 0:
             logger.info('verification completed, all files accounted for')
         else:
             logger.info('verification completed, %d files missing', len(self.missing_files))
+        ### END ###
 
         return len(self.missing_files)
 
@@ -222,7 +224,9 @@ class MSManager(object):
                 new_missing_files = self.scan_dup_content_match(new_fn, self.missing_files)
                 if new_missing_files:
                     (new_file, missing_file) = new_missing_files
+                    #### UNIT TEST ###
                     logger.warning('updating missing file %s to match new %s', missing_file, new_file)
+                    ### END ###
                     # NOTE: We update file, new data calculated here and history generated
                     if not self.params.get('dry', False):
                         keys = ['filename', 'mtime', 'ctime', 'last_visit', 'status']
@@ -242,9 +246,11 @@ class MSManager(object):
                 new_dupe_files = self.scan_dup_content_match(new_fn, self.existing_files)
                 if new_dupe_files:
                     (new_file, dupe_file) = new_dupe_files
+                    ### UNIT TEST ###
                     logger.warning('duplicate file detected:')
                     logger.warning('  new file:      %s', new_file)
                     logger.warning('  existing file: %s', dupe_file)
+                    ### END ###
                     logger.warning('leaving to manual intervention')
                     # TODO : add functionality for automatic handling
                     #   and create necessary history entries
@@ -309,7 +315,9 @@ class MSManager(object):
             return None
         elif len(match) == 1:
             matched_file = match.pop()
+            ### UNIT TEST ###
             logger.info('match on %s found with %s', matched_file, filename)
+            ### END ###
             return (new_file, matched_file)
         else:
             logger.error('multiple files returned on match for %s, aborting', filename)
@@ -330,7 +338,9 @@ class MSManager(object):
     # count as match.
     #
     def scan_existing_meta_match(self, filename, size):
-        match = filter(lambda x: x.filename == filename and x.size == size, self.existing_files)
+        filename = os.path.basename(filename)
+        logger.debug('checking for file %s (size %s) against %s', filename, size, self.existing_files)
+        match = filter(lambda x: os.path.basename(x.filename) == filename and x.size == size, self.existing_files)
         return match
 
     # Check if file is eligable for adding to DB
@@ -349,7 +359,7 @@ class MSManager(object):
     ### Mirror functions ###
     # Pull mirror from DB
     def get_mirror(self, host):
-        mirror = self.sasession.query(MSMirror).filter(MSMirror.url == host).first()
+        mirror = self.sasession.query(MSMirror).filter(MSMirror.url == host).one()
         return mirror
 
     # Add a mirror to DB
@@ -357,6 +367,7 @@ class MSManager(object):
         logger.info('adding mirror %s', location)
         mirror = build_mirror(location, params)
 
+        logger.debug('testing mirror %s', location)
         if mirror.connect():
             self.sasession.add(mirror)
             self.sasession.commit()
@@ -366,11 +377,13 @@ class MSManager(object):
     # Walk through mirror and scan files
     # Look for matches to existing files
     # Test on filename, size.
+    #
     # TODO: Plan out if we want to verify hashes
     # (this would be expensive, involving download
     # of all data from mirror and storing in a
     # temporary location to compute data)
     def walk_scan_mirror(self, host, path):
+        logger.debug('scanning %s', host)
         mirror = self.get_mirror(host)
         if not mirror.connect():
             logger.error('unable to connect, aborting')
@@ -385,5 +398,11 @@ class MSManager(object):
 
                 db_matches = self.scan_existing_meta_match(mfile_path, size)
                 logger.info('match on existing files: %s', db_matches)
+
+                if len(db_matches) == 1:
+                    mf = MSMirrorFile(db_matches[0], mirror)
+                    self.sasession.add(mf)
+                    self.sasession.commit()
+                    logger.info('created mirror file %s', mf)
 
 

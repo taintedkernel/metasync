@@ -11,6 +11,9 @@ import os
 from manager import MSManager
 
 
+LOG_FILE = 'metasync.log'
+
+
 ### Having issues getting this working, will revisit later ###
 #@click.group()
 #@click.pass_context
@@ -33,7 +36,7 @@ from manager import MSManager
 @click.option('--path', help='root path for files to manage')
 @click.option('--dedup', default=False, type=bool, help='enable deduplication detection')
 @click.option('--dry', default=False, type=bool, help='dry run (no changes)')
-def verify(db, verify, strong_verify, path, dedup, dry):
+def ep_verify(db, verify, strong_verify, path, dedup, dry):
     # A better way exists, but this works for the moment
     # Dry-run partially works, it shouldn't update the files table
     #   but history is still changed.  We should do some sort of
@@ -59,7 +62,7 @@ def verify(db, verify, strong_verify, path, dedup, dry):
 @click.option('--path', help='root path for files to manage')
 @click.option('--dedup', default=False, type=bool, help='enable deduplication detection')
 @click.option('--dry', default=False, type=bool, help='dry run (no changes)')
-def show_history(start, end, db, path, verify, strong_verify, dedup, dry):
+def ep_show_history(start, end, db, path, verify, strong_verify, dedup, dry):
     pnames = ('path', 'verify', 'strong_verify', 'dedup', 'dry')
     #args = (path, ctx.obj['verify'], ctx.obj['strong_verify'], dedup, dry)
     args = (path, verify, strong_verify, dedup, dry)
@@ -85,7 +88,7 @@ def show_history(start, end, db, path, verify, strong_verify, dedup, dry):
 @click.option('--path', help='root path for files to manage')
 @click.option('--dedup', default=False, type=bool, help='enable deduplication detection')
 @click.option('--dry', default=False, type=bool, help='dry run (no changes)')
-def add_path(db, verify, strong_verify, path, dedup, dry):
+def ep_add_path(db, verify, strong_verify, path, dedup, dry):
     pnames = ('path', 'verify', 'strong_verify', 'dedup', 'dry')
     args = (path, verify, strong_verify, dedup, dry)
     params = dict(zip(pnames, args))
@@ -102,7 +105,7 @@ def add_path(db, verify, strong_verify, path, dedup, dry):
 @click.argument('host')
 @click.option('--key', help='keyfile to connect to remote server')
 @click.option('--db', default=os.path.join(os.getcwd(), 'metasync.db'), help='location of database')
-def add_mirror(host, key, db):
+def ep_add_mirror(host, key, db):
     pnames = ('verify', 'strong_verify', 'dry')
     args = ('none', False, False)
     params = dict(zip(pnames, args))
@@ -119,9 +122,9 @@ def add_mirror(host, key, db):
 @click.argument('host')
 @click.option('--path', help='path to walk')
 @click.option('--db', default=os.path.join(os.getcwd(), 'metasync.db'), help='location of database')
-def walk_scan_mirror(host, path, db):
-    pnames = ('path', 'verify', 'strong_verify', 'dry')
-    args = (path, 'none', False, False)
+def ep_walk_scan_mirror(host, path, db):
+    pnames = ('verify', 'strong_verify', 'dry')
+    args = ('none', False, False)
     params = dict(zip(pnames, args))
 
     # Load our manager
@@ -139,7 +142,7 @@ def walk_scan_mirror(host, path, db):
     #        logger.info('found mirror file %s, size %d, time %s', mfile, size, mtime)
 
 
-def mirror_sync(db, path, verify_all):
+def ep_mirror_sync(db, path, verify_all):
     pass
 
 
@@ -152,5 +155,14 @@ ch.setLevel(logging.DEBUG)
 formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 ch.setFormatter(formatter)
 logger.addHandler(ch)
+
+log_file = os.path.join(os.getcwd(), LOG_FILE)
+fh = logging.FileHandler(log_file)
+fh.setLevel(logging.DEBUG)
+fh.setFormatter(formatter)
+#f = ContextFilter()
+#fh.addFilter(f)
+logger.addHandler(fh)
+
 logger.info('logger initialized')
 

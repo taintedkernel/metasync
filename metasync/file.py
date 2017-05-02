@@ -179,7 +179,9 @@ class MSFile(Base):
     #
     def visit(self, strong_verify=False):
         if not os.path.exists(self.filename):
+            ### UNIT TEST ###
             logger.warning('%s missing', self.filename)
+            ### END ###
             raise FileMissingError
 
         modified = dict()
@@ -192,7 +194,9 @@ class MSFile(Base):
         #logger.debug('mtime: %s' % mtime)
         if mtime > self.last_visit:
             modified['mtime'] = mtime
+            ### UNIT TEST ###
             logger.info('%s mtime modified', self.filename)
+            ### END ###
 
         self.last_visit = datetime.now()
 
@@ -211,7 +215,9 @@ class MSFile(Base):
         if len(modified) > 0 or strong_verify:
             sha256 = self.compute_sha256()
             if sha256 != self.sha256:
+                ### UNIT TEST ###
                 logger.info('%s contents updated to %s', self.filename, sha256)
+                ### END ###
 
                 if len(modified) == 0:
                     logger.fatal('possible data corruption on %s, contents changed without metadata change!', self.filename)
@@ -220,7 +226,9 @@ class MSFile(Base):
 
                 self.sha256 = modified['sha256'] = sha256
             else:
+                ### UNIT TEST ###
                 logger.info('%s detected as updated but contents unchanged, updating metadata', self)
+                ### END ###
 
             return modified
         return None

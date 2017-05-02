@@ -82,6 +82,9 @@ class MSMirror(Base, json.JSONEncoder):
         'polymorphic_on': type
     }
 
+    def __repr__(self):
+        return '<MSMirror %s type=%s>' % (self.url, self.type)
+
     def urlparse(self, url):
         p_url = dict()
         res = urlparse.urlparse(url)
@@ -97,6 +100,9 @@ class MSMirror(Base, json.JSONEncoder):
         #logger.debug('parsed URL: {scheme}://{host}:{port}{path}, user={user}, pass={pass}'.format(**p_url))
         #logger.debug('parsed URL: %s', urlparse.urlunparse(res))
         return p_url
+
+    def connect(self, url):
+        logger.debug('connecting to %s', url)
 
     def test_walk(self, path):
         for mpath, mdirs, mfiles in self.walk(path):
@@ -125,7 +131,9 @@ class MSMirrorFS(MSMirror):
         self.url = self.connect(p_url['path'])
 
     def connect(self, url=None):
-        nurl = os.path.normpath(url or self.url)
+        url = url or self.url
+        super(MSMirrorFS, self).connect(url)
+        nurl = os.path.normpath(url)
         if not os.path.isdir(nurl):
             raise InvalidPathError(nurl)
         return nurl
@@ -210,6 +218,7 @@ class MSMirrorFTP(MSMirror):
         self.f_mtime = {}
 
     def connect(self):
+        super(MSMirrorFTP, self).connect(self.url)
         try:
             #p_url = self.urlparse(url or self.url)
             p_url = self.urlparse(self.url)
@@ -285,6 +294,7 @@ class MSMirrorSFTP(MSMirror, json.JSONEncoder):
         self.params = params
 
     def connect(self):
+        super(MSMirrorSFTP, self).connect(self.url)
         try:
             self.client = SSHClient()
             self.client.load_system_host_keys()
@@ -319,7 +329,14 @@ class MSMirrorFile(Base):
     file = relationship('MSFile', backref='mirrors')
     mirror_id = Column(Integer, ForeignKey('mirror.id'))
     mirror = relationship('MSMirror', backref='files')
-    filename = Column(String(256), nullable=False, unique=True)
+    #filename = Column(String(256), nullable=False, unique=True)
+
+    def __init__(self, src_file, src_mirror):
+        self.file = src_file
+        self.mirror = src_mirror
+
+    def __repr__(self):
+        return '<MSMirrorFile id=%d, file=%s, mirror=%s>' % (self.id, self.file, self.mirror)
 
 
 #
