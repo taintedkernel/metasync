@@ -337,9 +337,14 @@ class MSManager(object):
     # default.  If same filename but different size, do not
     # count as match.
     #
+    # TODO: make this static method as above?  at least unify approaches
+    #
     def scan_existing_meta_match(self, filename, size):
         filename = os.path.basename(filename)
-        logger.debug('checking for file %s (size %s) against %s', filename, size, self.existing_files)
+        if len(self.existing_files) < 10:
+            logger.debug('checking for file %s (size %s) against %s', filename, size, self.existing_files)
+        else:
+            logger.debug('checking for file %s (size %s) against existing files', filename, size)
         match = filter(lambda x: os.path.basename(x.filename) == filename and x.size == size, self.existing_files)
         return match
 
@@ -374,6 +379,31 @@ class MSManager(object):
         else:
             logger.error('unable to connect to mirror, aborting add')
 
+    #
+    # Verify files on our mirror
+    #
+    # TODO: Thinking we either run verify_files (to validate
+    # "local" data first) and then compare each to mirror_file?
+    # Do we combine functionality in one method?
+    # Do we skip local files?
+    def verify_host_files(self, host):
+        mirror = self.get_mirror(host)
+        if not mirror:
+            logger.error('unable to find mirror %s', host)
+            return
+
+        logger.info('verifying files on mirror %s', mirror)
+        for mf in mirror.files:
+            logger.info(mf)
+
+    # Wrapper to call walk_scan_mirror with a host
+    def walk_scan_host(self, host, path):
+        mirror = self.get_mirror(host)
+        if not mirror:
+            logger.error('unable to find mirror %s', host)
+            return
+        self.walk_scan_mirror(mirror, path)
+
     # Walk through mirror and scan files
     # Look for matches to existing files
     # Test on filename, size.
@@ -382,9 +412,8 @@ class MSManager(object):
     # (this would be expensive, involving download
     # of all data from mirror and storing in a
     # temporary location to compute data)
-    def walk_scan_mirror(self, host, path):
-        logger.debug('scanning %s', host)
-        mirror = self.get_mirror(host)
+    def walk_scan_mirror(self, mirror, path):
+        logger.debug('scanning mirror %s', mirror)
         if not mirror.connect():
             logger.error('unable to connect, aborting')
             return
@@ -404,5 +433,7 @@ class MSManager(object):
                     self.sasession.add(mf)
                     self.sasession.commit()
                     logger.info('created mirror file %s', mf)
-
-
+                elif len(db_matches) > 1:
+                    logger.debug('multiple matches found, skipping')
+                elif len(db_matches) == 0:
+                    logger.debug('no matches found')

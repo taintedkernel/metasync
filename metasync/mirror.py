@@ -206,6 +206,8 @@ class MSMirrorFTP(MSMirror):
 
         self.url = url
         self.params = params
+
+        # We cache filesize + mtime from directory listings
         self.f_size = {}
         self.f_mtime = {}
 
@@ -240,6 +242,8 @@ class MSMirrorFTP(MSMirror):
             logger.error('unable to change directory to %s, currently in %s', path, self.conn.pwd())
             return dirs, files
 
+        # Iterate through files in dir, add new dirs to list to iterate
+        # Add files to file list, cache size + mtime
         self.conn.retrlines('LIST', lambda x: dirlist.append(x.split()))
         for entry in dirlist:
             #logger.debug('entry : %s', entry)
@@ -275,6 +279,7 @@ class MSMirrorSFTP(MSMirror, json.JSONEncoder):
 
     id = Column(Integer, ForeignKey('mirror.id'), primary_key=True)
     #url = Column(String(256), nullable=False, unique=True)
+    path = Column(String(256))
     params = Column(sqlalchemy_jsonfield.JSONField(enforce_string=False))
 
     __mapper_args__ = {
@@ -291,6 +296,7 @@ class MSMirrorSFTP(MSMirror, json.JSONEncoder):
             raise MissingCredentialsError
 
         self.url = url
+        self.path = p_url['path']
         self.params = params
 
     def connect(self):
@@ -301,15 +307,21 @@ class MSMirrorSFTP(MSMirror, json.JSONEncoder):
             self.client.set_missing_host_key_policy(AutoAddPolicy())
             self.client.connect('localhost', key_filename=self.params['key'])
             self.sftp = self.client.open_sftp()
+            logger.debug('changing directory to %s', self.path)
+            self.sftp.chdir(self.path)
             return True
         except:
             return False
 
     # https://gist.github.com/johnfink8/2190472
-    def walk(self, path='.'):
+    def walk(self, path=None):
+        logger.debug('self path=%s, called path=%s', self.path, path)
+        #npath = abspath_re.sub('', path)
+        npath = self.path_join(path)
+        logger.debug('walking path %s', npath)
         dirs = list()
         files = list()
-        for f in self.sftp.listdir_attr(path):
+        for f in self.sftp.listdir_attr(npath):
             if S_ISDIR(f.st_mode):
                 dirs.append(f.filename)
             else:
@@ -319,6 +331,18 @@ class MSMirrorSFTP(MSMirror, json.JSONEncoder):
             _path = os.path.join(path, d)
             for f in self.walk(_path):
                 yield f
+
+    def path_join(self, path):
+        abspath_re = re.compile(r'^/+')
+        return os.path.join(self.path, abspath_re.sub('', path))
+
+    def get_size(self, fname):
+        logger.debug('checking size on %s', fname)
+        logger.debug('%s', self.path_join(fname))
+        return self.sftp.lstat(self.path_join(fname)).st_size
+
+    def get_mtime(self, fname):
+        return self.sftp.lstat(self.path_join(fname)).st_mtime
 
 
 class MSMirrorFile(Base):
