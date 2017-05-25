@@ -21,12 +21,17 @@ import sys
 import os
 import re
 
+from repo import MSRepo
 from file import MSFile
 from mirror import build_mirror, MSMirror, MSMirrorFS, MSMirrorSFTP, MSMirrorFile
 from main import Base, FileMissingError, NullHashError, DefaultEncoder
 
 
 logger = logging.getLogger(__name__)
+
+
+class NoRepoError(Exception):
+    pass
 
 
 ########################
@@ -84,14 +89,41 @@ class MSHistory(Base, json.JSONEncoder):
 
 class MSManager(object):
 
-    def __init__(self, db, params):
+    def __init__(self, db, repo_path, params):
         logger.info('initializing database %s', db)
+
         engine = create_engine('sqlite:///%s' % db)
         Base.metadata.create_all(engine)
         Session = sessionmaker(bind=engine)
         self.sasession = Session()
-        self.execution = MSExecution()
+
         self.params = params
+        self.execution = MSExecution()
+
+        # Get repo from the DB
+        #
+        # If not present and create_missing flag
+        # passed, create & commit new repo, then
+        # continue.  If not present and no_repo
+        # flag passed, acknowledge and continue.
+        repo = self.get_repo(repo_path)
+        if not repo:
+            if params.get('create_missing_repo', False):
+                repo =  MSRepo(repo_path)
+                self.sasession.add(repo)
+                self.sasession.commit()
+            elif params.get('mgr_no_repo', False):
+                # Used in functionality where we do not
+                # need to interact with any repo data.
+                #
+                # We do not check presence of a correct
+                # repo in functions, they will fail
+                # when executed at some point.
+                logger.warning('manager invoked without repo, continuing without initialization')
+                return
+            else:
+                raise NoRepoError
+        self.repo = repo
 
         logger.info('reading files from database')
         self.existing_files = self.sasession.query(MSFile).all()
@@ -103,24 +135,30 @@ class MSManager(object):
             logger.info('database empty/new, skipping verification')
             return
 
-        if not self.params.get('path'):
-            return
+        self.verify_files()
 
-        self.verify_files(self.params['path'])
+    ### Get a repo ###
+    def get_repo(self, repo_path):
+        try:
+            repo = self.sasession.query(MSRepo).filter(MSRepo.path == repo_path).one()
+        except orm.exc.NoResultFound:
+            repo = None
+        return repo
 
     ### Verify internal list of known files ###
-    def verify_files(self, path):
-        logger.info('verifying database')
+    def verify_files(self):
+        path = self.repo.path
+        logger.info('starting database verification')
 
         if self.params.get('verify') == 'none':
             logger.info('invoked with verify=none, skipping verification')
             return
         elif self.params.get('verify') == 'all' or not path:
             verify_files = self.existing_files
-        elif self.params.get('verify') == 'path':
-            verify_files = filter(lambda x: os.path.samefile(path, x.file_path), self.existing_files)
-        elif self.params.get('verify') == 'recurse':
-            verify_files = filter(lambda x: path in x.file_path, self.existing_files)
+        #elif self.params.get('verify') == 'path':
+        #    verify_files = filter(lambda x: os.path.samefile(path, x.file_path), self.existing_files)
+        #elif self.params.get('verify') == 'recurse':
+        #    verify_files = filter(lambda x: path in x.file_path, self.existing_files)
         else:
             logger.error('invoked with invalid verify=%s, defaulting to all files', self.params.get('verify'))
             verify_files = self.existing_files
@@ -174,8 +212,10 @@ class MSManager(object):
     #
     # - Search for new files
     #
-    def scan_new_files(self, path):
-        logger.info('scanning path %s', path)
+    def scan_new_files(self, path=None):
+        if not path:
+            path = self.repo.path
+        logger.info('starting new file scan on %s', path)
         files_parsed = files_skipped = total_files = 0
         new_files = list()
         #known_files = self.existing_files
@@ -193,7 +233,7 @@ class MSManager(object):
                     logger.debug('status: %d skipped, %d new, %d parsed, %d total (%2.0f%% complete)',
                                  files_skipped, len(new_files), files_parsed, total_files, l_files_parsed / float(len(files)) * 100)
 
-                filename = os.path.join(root, name)
+                filename = os.path.relpath(os.path.join(root, name), self.repo.path)
                 logger.info('checking [%d/%d]: %s', files_parsed + 1, total_files, filename)
 
                 existing_file = self.get_db_file(filename)
@@ -207,19 +247,19 @@ class MSManager(object):
                 files_parsed += 1
                 l_files_parsed += 1
 
-        # Exit without commit if no new files found
-        if not new_files:
-            return list()
-
         #logger.info('%d new files found, adding to database', len(new_files))
-        logger.info('%d new files found', len(new_files))
+        logger.info('scanning complete, %d new files found', len(new_files))
         return new_files
 
     # Iterate through newly detected files
     # First, compare against missing list (file was moved)
     # Then compare against existing known files (dedup detection, if enabled)
     def verify_add_new_files(self, new_files):
+        logger.info('starting verify/add new files')
         for new_fn in new_files:
+
+            # Check against missing files
+            # TODO: same logic as dupes, combine them: one missing, one existing
             if len(self.missing_files) > 0:
                 new_missing_files = self.scan_dup_content_match(new_fn, self.missing_files)
                 if new_missing_files:
@@ -227,6 +267,7 @@ class MSManager(object):
                     #### UNIT TEST ###
                     logger.warning('updating missing file %s to match new %s', missing_file, new_file)
                     ### END ###
+
                     # NOTE: We update file, new data calculated here and history generated
                     if not self.params.get('dry', False):
                         keys = ['filename', 'mtime', 'ctime', 'last_visit', 'status']
@@ -262,11 +303,23 @@ class MSManager(object):
                     self.add_file(new_fn, delay_commit=True)
 
         self.sasession.commit()
+        logger.info('verify/add new files complete')
+
+    ### Add a new repo to DB ###
+    def add_repo(self, path):
+        logger.debug('creating new repo at %s', path)
+        if not os.path.isdir(path):
+            logger.error('path %s is not directory, aborting')
+            return
+
+        repo = MSRepo(path)
+        self.sasession.add(repo)
+        return repo
 
     ### Add a file to DB ###
     def add_file(self, filepath, delay_commit=False):
-        #logger.debug('adding new file at %s', filepath)
-        new_file = MSFile(filepath)
+        logger.debug('adding new file at %s', filepath)
+        new_file = MSFile(filepath, self.repo)
         self.sasession.add(new_file)
         self.sasession.flush()
         new_history = MSHistory(new_file, new_file.to_json(), self.execution, status='new')
@@ -278,10 +331,10 @@ class MSManager(object):
         self.existing_files.append(new_file)
 
     ### Check to see if file exists in DB ###
-    def get_db_file(self, file_path):
+    def get_db_file(self, filename):
         # TODO: Do we scan DB directly instead of self.existing_files?
         #filtered_files = sorted(filter(lambda x: x.filename == file_path, self.existing_files), key=lambda y: y.added_time)
-        filtered_files = filter(lambda x: x.filename == file_path, self.existing_files)
+        filtered_files = filter(lambda x: x.filename == filename, self.existing_files)
         if len(filtered_files) == 0:
             return None
         elif len(filtered_files) == 1:
@@ -307,10 +360,9 @@ class MSManager(object):
     # Then, if no match and dedup is enabled we can search further
     #   Both on existing, plus other new files
     #
-    @staticmethod
-    def scan_dup_content_match(filename, source):
-        new_file = MSFile(filename)
-        match = filter(lambda x: x.size == new_file.size and x.sha256 == new_file.sha256 and x.filename != new_file.filename, source)
+    def scan_dup_content_match(self, filename, source):
+        new_file = MSFile(filename, self.repo)
+        match = filter(lambda x: x.size == new_file.size and x.sha256 == new_file.sha256 and x.filename != new_file.filename and new_file.repo == self.repo, source)
         if len(match) == 0:
             return None
         elif len(match) == 1:
@@ -327,7 +379,7 @@ class MSManager(object):
             return None
 
     #
-    # Scan DB for matches on existing files (only metadata)
+    # Scan DB for metadata matches on existing files
     #
     # This will be used by mirror logic to scan any new files
     # on a mirror to known existing files in the database
@@ -337,7 +389,7 @@ class MSManager(object):
     # default.  If same filename but different size, do not
     # count as match.
     #
-    # TODO: make this static method as above?  at least unify approaches
+    # TODO: Make this static method as above?  At least unify approaches
     #
     def scan_existing_meta_match(self, filename, size):
         filename = os.path.basename(filename)

@@ -1,4 +1,4 @@
-from sqlalchemy import Column, ForeignKey, Integer, String, UnicodeText, DateTime
+from sqlalchemy import Column, ForeignKey, Integer, String, UnicodeText, DateTime, UniqueConstraint
 from sqlalchemy.orm import relationship, sessionmaker
 from sqlalchemy import create_engine, orm
 
@@ -46,7 +46,9 @@ class MSFile(Base):
     __tablename__ = 'files'
 
     id = Column(Integer, primary_key=True)
-    filename = Column(String(256), nullable=False, unique=True)
+    repo_id = Column(Integer, ForeignKey('repos.id'))
+    repo = relationship('MSRepo', backref='files')
+    filename = Column(String(256), nullable=False)
     status = Column(String(64), default='valid')  # valid, missing
     size = Column(Integer, default=0)
     mtime = Column(DateTime)
@@ -54,16 +56,19 @@ class MSFile(Base):
     sha256 = Column(String(64), default=None)
     last_visit = Column(DateTime)
 
+    UniqueConstraint('filename', 'repo')
+
     # TODO: Do we really need functionality to specify a custom sha256?
     # Maybe in cases where we are trying to recover from corruption?
     # Also, might want to support a "lite" mode where files are not hashed
     # FYI Sqlalchemy utilizes __new__ (not __init__)
-    def __init__(self, filename, sha256=None, verify_exist=True, compute_hash=True):
-        if verify_exist:
-            if not os.path.exists(filename):
-                raise InvalidFileError(filename)
-
+    def __init__(self, filename, repo, sha256=None, verify_exist=True, compute_hash=True):
         self.filename = filename
+        self.repo = repo
+
+        if verify_exist:
+            if not os.path.exists(self.local_file_path):
+                raise InvalidFileError(self.local_file_path)
 
         if compute_hash:
             if self.sha256:
@@ -86,13 +91,13 @@ class MSFile(Base):
         #        .format(self.filename, self.mtime, self.size, self.sha256[:16],\
         #                self.last_visit, self.added_time)
         if self.added_time:
-            return '<File {0} name={1} mtime={2} size={3} sha256={4} added={6} last_visit={5}>'.format(
+            return '<File {0} repo={7} name={1} mtime={2} size={3} sha256={4} added={6} last_visit={5}>'.format(
                    self.id, self.filename, self.mtime.strftime('%Y-%m-%d %H:%M:%S'), self.size, self.sha256[:16],
-                   self.last_visit.strftime('%Y-%m-%d %H:%M:%S'), self.added_time.strftime('%Y-%m-%d %H:%M:%S'))
+                   self.last_visit.strftime('%Y-%m-%d %H:%M:%S'), self.added_time.strftime('%Y-%m-%d %H:%M:%S'), self.repo_id)
         else:
-            return '<File {0} name={1} mtime={2} size={3} sha256={4} last_visit={5}>'.format(
+            return '<File {0} repo={6} name={1} mtime={2} size={3} sha256={4} last_visit={5}>'.format(
                    self.id, self.filename, self.mtime.strftime('%Y-%m-%d %H:%M:%S'), self.size, self.sha256[:16],
-                   self.last_visit.strftime('%Y-%m-%d %H:%M:%S'))
+                   self.last_visit.strftime('%Y-%m-%d %H:%M:%S'), self.repo_id)
 
     def to_json(self):
         serial = dict()
@@ -106,13 +111,20 @@ class MSFile(Base):
         serial['last_visit'] = self.last_visit.strftime('%Y-%m-%d %H:%M:%S')
         return json.dumps(serial)
 
+    # Get the filename without path
     @property
     def file_name(self):
         return os.path.basename(self.filename)
 
+    # Path of filename below repo base
     @property
-    def file_path(self):
+    def file_directory(self):
         return os.path.join(os.path.dirname(self.filename), '')
+
+    # Full path: base repo path + filename
+    @property
+    def local_file_path(self):
+        return os.path.join(self.repo.path, self.filename)
 
     # TODO: Still kinda broke, fix this
     @property
@@ -133,19 +145,19 @@ class MSFile(Base):
     #    return None
 
     def get_size(self):
-        return os.path.getsize(self.filename)
+        return os.path.getsize(self.local_file_path)
 
     def get_mtime(self):
-        return datetime.fromtimestamp(os.path.getmtime(self.filename))
+        return datetime.fromtimestamp(os.path.getmtime(self.local_file_path))
 
     # We won't typically use this, but tracking regardless
     def get_ctime(self):
-        return datetime.fromtimestamp(os.path.getctime(self.filename))
+        return datetime.fromtimestamp(os.path.getctime(self.local_file_path))
 
     # Compute our file hash
     def compute_sha256(self, blocksize=65536):
         hasher = hashlib.sha256()
-        with open(self.filename, 'rb') as f:
+        with open(self.local_file_path, 'rb') as f:
             buf = f.read(blocksize)
             while len(buf) > 0:
                 hasher.update(buf)
@@ -178,7 +190,7 @@ class MSFile(Base):
     # Return True if contents modified, False otherwise
     #
     def visit(self, strong_verify=False):
-        if not os.path.exists(self.filename):
+        if not os.path.exists(self.local_file_path):
             ### UNIT TEST ###
             logger.warning('%s missing', self.filename)
             ### END ###

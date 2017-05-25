@@ -97,8 +97,9 @@ def ep_add_path(db, verify, strong_verify, path, dedup, dry):
     mgr = MSManager(db, params)
     logger.info('manager loaded')
 
+    repo = mgr.add_repo(path)
     new_files = mgr.scan_new_files(path)
-    mgr.verify_add_new_files(new_files)
+    mgr.verify_add_new_files(repo, new_files)
 
 
 @click.command()

@@ -33,47 +33,50 @@ class ContextFilter(logging.Filter):
 
 ### Invocations ###
 @click.command()
-@click.option('--db')
-@click.option('--path')
-@click.option('--verify', default='recurse', type=click.Choice(['none', 'path', 'recurse', 'all']))
+@click.option('--db', default=os.path.join(os.getcwd(), 'metasync.db'), help='location of database')
+@click.option('--repo', help='root repository to use')
+@click.option('--verify', default='all', type=click.Choice(['none', 'all']))
 @click.option('--dedup', default=False, type=bool)
-def ms_verify(db, path, verify, dedup):
-    options = {'path': path, 'verify': verify, 'dedup': dedup}
-    logger.debug('options: %s', options)
-    mgr = MSManager(db, options)
+def ms_verify(db, repo, verify, dedup):
+    params = {'verify': verify, 'dedup': dedup}
+
+    mgr = MSManager(db, repo, params)
+    logger.info('manager loaded')
+
     sys.exit(0)
 
 
 @click.command()
-@click.option('--db')
-@click.option('--path')
-@click.option('--verify', default='recurse', type=click.Choice(['none', 'path', 'recurse', 'all']))
+@click.option('--db', default=os.path.join(os.getcwd(), 'metasync.db'), help='location of database')
+@click.option('--repo', help='root repository to use')
+@click.option('--verify', default='all', type=click.Choice(['none', 'all']))
 @click.option('--dedup', default=False, type=bool)
-def ms_add(db, path, verify, dedup):
-    options = {'path': path, 'verify': verify, 'dedup': dedup}
-    logger.debug('options: %s', options)
-    mgr = MSManager(db, options)
-    new_files = mgr.scan_new_files(path)
+def ms_add(db, repo, verify, dedup):
+    params = {'verify': verify, 'dedup': dedup, 'create_missing_repo': True}
+
+    mgr = MSManager(db, repo, params)
+    logger.info('manager loaded')
+
+    new_files = mgr.scan_new_files()
     mgr.verify_add_new_files(new_files)
+
     sys.exit(0)
 
 
 @click.command()
 @click.argument('host')
-@click.option('--key', default=None, help='keyfile to connect to remote server')
 @click.option('--db', default=os.path.join(os.getcwd(), 'metasync.db'), help='location of database')
+@click.option('--key', default=None, help='keyfile to connect to remote server')
 #@click.option('--verify', default='recurse', type=click.Choice(['none', 'path', 'recurse', 'all']))
 #@click.option('--path', help='root path for files to manage')
 def ms_add_mirror(host, key, db):
-    #pnames = ('path', 'verify', 'strong_verify', 'dedup', 'dry')
-    #args = (path, 'none', False, dedup, dry)
-    pnames = ('verify', 'strong_verify', 'dry')
+    pnames = ('verify', 'strong_verify', 'dry', 'mgr_no_repo')
     #args = (path, ctx.obj['verify'], ctx.obj['strong_verify'], dedup, dry)
-    args = ('none', False, False)
+    args = ('none', False, False, True)
     params = dict(zip(pnames, args))
 
     # Load our manager
-    mgr = MSManager(db, params)
+    mgr = MSManager(db, None, params)
     logger.info('manager loaded')
 
     mgr.add_mirror(host, {'key': key})
@@ -81,15 +84,15 @@ def ms_add_mirror(host, key, db):
 
 @click.command()
 @click.argument('host')
-@click.option('--path', default='/', help='path to walk')
 @click.option('--db', default=os.path.join(os.getcwd(), 'metasync.db'), help='location of database')
-def ms_walk_scan_mirror(host, path, db):
+@click.option('--repo', help='root repository to use')
+def ms_walk_scan_mirror(host, repo, db):
     pnames = ('verify', 'strong_verify', 'dry')
     args = ('none', False, False)
     params = dict(zip(pnames, args))
 
     # Load our manager
-    mgr = MSManager(db, params)
+    mgr = MSManager(db, repo, params)
     logger.info('manager loaded')
 
     mgr.walk_scan_host(host, path)
@@ -97,15 +100,17 @@ def ms_walk_scan_mirror(host, path, db):
 
 @click.command()
 @click.argument('host')
-@click.option('--path', default='/', help='path to walk')
 @click.option('--db', default=os.path.join(os.getcwd(), 'metasync.db'), help='location of database')
-def ms_verify_host_files(host, path, db):
+@click.option('--repo', help='root repository to use')
+#@click.option('--path', default='/', help='path to walk')
+#def ms_verify_host_files(host, path, db):
+def ms_verify_host_files(host, repo, db):
     pnames = ('verify', 'strong_verify', 'dry')
     args = ('none', False, False)
     params = dict(zip(pnames, args))
 
     # Load our manager
-    mgr = MSManager(db, params)
+    mgr = MSManager(db, path, params)
     logger.info('manager loaded')
 
     mgr.verify_host_files(host)
@@ -158,7 +163,7 @@ def _setup_log_mock_data(runner, invoke=True):
 
     if invoke:
         logger.debug('loading metasync:ms_add')
-        result = runner.invoke(ms_add, ['--db', test_db_path, '--path', test_data_path])
+        result = runner.invoke(ms_add, ['--db', test_db_path, '--repo', test_data_path], catch_exceptions=False)
         _test_exitcode_logs(result)
 
     return (test_db_path, test_data_path, test_file_path)
@@ -184,7 +189,11 @@ def _test_exitcode_logs(result, expect_warnings=False, regex=None):
     if regex:
         for r in regex:
             rc = re.compile(r, re.M)
-            assert re.search(rc, test_log_data)
+            try:
+                assert re.search(rc, test_log_data)
+            except AssertionError, e:
+                logger.critical('unable to match regex %s', r)
+                raise e
 
     return test_log_data
 
@@ -213,10 +222,11 @@ def test_detect_updated_metadata():
 
         # Test successful detection
         logger.debug('loading metasync:ms_verify')
-        result = runner.invoke(ms_verify, ['--db', test_db_path, '--path', test_data_path])
+        result = runner.invoke(ms_verify, ['--db', test_db_path, '--repo', test_data_path])
 
-        mtime_mod_msg = '^.*%s.*mtime modified.*$' % (test_file_path)
-        data_same_msg = '^.*%s.*detected as updated but contents unchanged.*$' % (test_file_path)
+        l_test_file_path = os.path.relpath(test_file_path, test_data_path)
+        mtime_mod_msg = '^.*%s.*mtime modified.*$' % (l_test_file_path)
+        data_same_msg = '^.*%s.*detected as updated but contents unchanged.*$' % (l_test_file_path)
         regex = [mtime_mod_msg, data_same_msg]
         test_log_data = _test_exitcode_logs(result, regex=regex)
 
@@ -244,11 +254,12 @@ def test_detect_updated_data():
 
         # Test successful detection
         logger.debug('loading metasync:ms_add')
-        result = runner.invoke(ms_add, ['--db', test_db_path, '--path', test_data_path])
+        result = runner.invoke(ms_add, ['--db', test_db_path, '--repo', test_data_path], catch_exceptions=False)
 
         # We expect a WARNING here
-        mtime_mod_msg = '^.*%s.*mtime modified.*$' % (test_file_path)
-        data_updated_msg = '^.*%s.*contents updated to.*$' % (test_file_path)
+        l_test_file_path = os.path.relpath(test_file_path, test_data_path)
+        mtime_mod_msg = '^.*%s.*mtime modified.*$' % (l_test_file_path)
+        data_updated_msg = '^.*%s.*contents updated to.*$' % (l_test_file_path)
         regex = [mtime_mod_msg, data_updated_msg]
         test_log_data = _test_exitcode_logs(result, expect_warnings=True, regex=regex)
 
@@ -272,12 +283,13 @@ def test_detect_missing_files():
 
         # Test successful detection
         logger.debug('loading metasync:ms_verify')
-        result = runner.invoke(ms_verify, ['--db', test_db_path, '--path', test_data_path])
+        result = runner.invoke(ms_verify, ['--db', test_db_path, '--repo', test_data_path], catch_exceptions=False)
 
         # We expect a WARNING here
         test_log_data = _test_exitcode_logs(result, expect_warnings=True)
 
-        file_missing_msg = 'WARNING - %s missing' % test_file_path
+        l_test_file_path = os.path.relpath(test_file_path, test_data_path)
+        file_missing_msg = 'WARNING - %s missing' % l_test_file_path
         assert file_missing_msg in test_log_data
         assert 'verification completed, 1 files missing' in test_log_data
         logger.info('--- test passed ---')
@@ -304,15 +316,17 @@ def test_detect_moved_files():
 
         # Test successful detection
         logger.debug('loading metasync:ms_add')
-        result = runner.invoke(ms_add, ['--db', test_db_path, '--path', test_data_path])
+        result = runner.invoke(ms_add, ['--db', test_db_path, '--repo', test_data_path], catch_exceptions=False)
 
         # We expect a WARNING here
-        match_found_msg = '^.*match on .*%s.* found with .*%s.*$' % (test_file_path, new_test_file_path)
-        update_file_msg = '^.*updating missing file .*%s.* to match new .*%s.*$' % (test_file_path, new_test_file_path)
+        l_test_file_path = os.path.relpath(test_file_path, test_data_path)
+        l_new_test_file_path = os.path.relpath(new_test_file_path, test_data_path)
+        match_found_msg = '^.*match on .*%s.* found with .*%s.*$' % (l_test_file_path, l_new_test_file_path)
+        update_file_msg = '^.*updating missing file .*%s.* to match new .*%s.*$' % (l_test_file_path, l_new_test_file_path)
         regex = [match_found_msg, update_file_msg]
         test_log_data = _test_exitcode_logs(result, expect_warnings=True, regex=regex)
 
-        file_missing_msg = 'WARNING - %s missing' % test_file_path
+        file_missing_msg = 'WARNING - %s missing' % l_test_file_path
         assert file_missing_msg in test_log_data
         assert 'verification completed, 1 files missing' in test_log_data
         logger.info('--- test passed ---')
@@ -333,7 +347,7 @@ def test_detect_renamed_files():
 # TEST 5 : Dedupe functionality:
 #  - Create new temp file in "path", copy to new temp file in same path
 #
-def test_create_dupe_files():
+def test_detect_dupe_files():
     logger.info('--- running create_dupe_files test ---')
     runner = CliRunner()
     with runner.isolated_filesystem():
@@ -347,11 +361,13 @@ def test_create_dupe_files():
 
         # Test successful detection
         logger.debug('loading metasync:ms_add')
-        result = runner.invoke(ms_add, ['--db', test_db_path, '--path', test_data_path, '--dedup', True])
+        result = runner.invoke(ms_add, ['--db', test_db_path, '--repo', test_data_path, '--dedup', True], catch_exceptions=False)
 
         # We expect a WARNING here
-        new_dupe_msg = '^.*new file:.*%s.*$' % (test_file2_path)
-        existing_dupe_msg = '^.*existing file:.*%s.*$' % (test_file_path)
+        l_test_file_path = os.path.relpath(test_file_path, test_data_path)
+        l_test_file2_path = os.path.relpath(test_file2_path, test_data_path)
+        new_dupe_msg = '^.*new file:.*%s.*$' % (l_test_file2_path)
+        existing_dupe_msg = '^.*existing file:.*%s.*$' % (l_test_file_path)
         regex = [new_dupe_msg, existing_dupe_msg]
         test_log_data = _test_exitcode_logs(result, expect_warnings=True, regex=regex)
 
@@ -376,14 +392,14 @@ def test_ftp_connect():
 
         time.sleep(2)
         logger.debug('loading metasync:ms_add_mirror')
-        result = runner.invoke(ms_add_mirror, [FTP_URL, '--db', test_db_path])
-
         try:
-            test_log_data = _test_exitcode_logs(result)
-        except:
+            result = runner.invoke(ms_add_mirror, [FTP_URL, '--db', test_db_path], catch_exceptions=False)
+            test_log_data = _test_exitcode_logs(result, expect_warnings=True)
+        except Exception, e:
             logger.info('shutting down ftp daemon')
             ftpd.terminate()
             ftpd.join()
+            raise e
 
         logger.info('shutting down ftp daemon')
         ftpd.terminate()
@@ -420,10 +436,10 @@ def test_ftp_scan_match():
 
         time.sleep(2)
         logger.debug('loading metasync:ms_add_mirror')
-        result = runner.invoke(ms_add_mirror, [FTP_URL, '--db', test_db_path])
+        result = runner.invoke(ms_add_mirror, [FTP_URL, '--db', test_db_path], catch_exceptions=False)
 
         try:
-            test_log_data = _test_exitcode_logs(result)
+            test_log_data = _test_exitcode_logs(result, expect_warnings=True)
         except:
             logger.info('shutting down ftp daemon')
             ftpd.terminate()
@@ -432,11 +448,11 @@ def test_ftp_scan_match():
 
         # TODO: We need to validate test file is matched
         logger.debug('loading metasync:ms_walk_scan_mirror')
-        result = runner.invoke(ms_walk_scan_mirror, [FTP_URL, '--path', '/', '--db', test_db_path])
+        result = runner.invoke(ms_walk_scan_mirror, [FTP_URL, '--repo', test_data_path, '--db', test_db_path], catch_exceptions=False)
 
         try:
             test_log_data = _test_exitcode_logs(result)
-        except e:
+        except Exception, e:
             logger.error('exception: %s', e)
             logger.info('shutting down ftp daemon')
             ftpd.terminate()
@@ -469,7 +485,7 @@ def test_sftp_connect():
         url = SFTP_URL.format(path=tmp_path)
         result = runner.invoke(ms_add_mirror, [url, '--key', SSH_KEY, '--db', test_db_path])
 
-        test_log_data = _test_exitcode_logs(result)
+        test_log_data = _test_exitcode_logs(result, expect_warnings=True)
         logger.debug('--- test passed ---')
 
 
@@ -500,7 +516,7 @@ def test_sftp_scan_match():
         url = SFTP_URL.format(path=tmp_path)
         result = runner.invoke(ms_add_mirror, [url, '--key', SSH_KEY, '--db', test_db_path])
 
-        test_log_data = _test_exitcode_logs(result)
+        test_log_data = _test_exitcode_logs(result, expect_warnings=True)
 
         # TODO: We need to validate test file is matched
         logger.debug('loading metasync:ms_walk_scan_mirror')
@@ -521,7 +537,7 @@ def test_sftp_scan_match():
 #  - Test rename of local file, detection of change
 #  - Test propagation of local rename to mirror SFTP data
 #
-def new_test():
+def test_sftp_scan_match_rename():
     logger.info('--- running test_sftp_scan_match_rename  ---')
     runner = CliRunner()
     with runner.isolated_filesystem():
@@ -541,12 +557,12 @@ def new_test():
         url = SFTP_URL.format(path=tmp_path)
         result = runner.invoke(ms_add_mirror, [url, '--key', SSH_KEY, '--db', test_db_path])
 
-        test_log_data = _test_exitcode_logs(result)
+        test_log_data = _test_exitcode_logs(result, expect_warnings=True)
 
         # TODO: We need to validate test file is matched
         logger.debug('loading metasync:ms_walk_scan_mirror')
         #result = runner.invoke(ms_walk_scan_mirror, [url, '--path', '/', '--db', test_db_path])
-        result = runner.invoke(ms_walk_scan_mirror, [url, '--db', test_db_path])
+        result = runner.invoke(ms_walk_scan_mirror, [url, '--repo', test_data_path, '--db', test_db_path])
 
         test_log_data = _test_exitcode_logs(result)
 
@@ -559,7 +575,7 @@ def new_test():
         os.rename(test_file_path, new_test_file_path)
 
         # Reload metasync, ensure changes are detected
-        result = runner.invoke(ms_add, ['--path', test_data_path, '--db', test_db_path])
+        result = runner.invoke(ms_add, ['--repo', test_data_path, '--db', test_db_path])
 
         # We expect a WARNING here
         match_found_msg = '^.*match on .*%s.* found with .*%s.*$' % (test_file_path, new_test_file_path)

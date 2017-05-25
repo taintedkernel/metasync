@@ -92,9 +92,11 @@ class MSMirror(Base, json.JSONEncoder):
         p_url['host'] = res.hostname
         p_url['path'] = res.path or '/'
 
+        # Assume that any subclass with port defined is tcp-based
+        # and may have connection port or credentials, provide defaults
         if hasattr(self, 'DEFAULT_PORT'):
             p_url['port'] = res.port or self.DEFAULT_PORT
-            p_url['user'] = res.username or 'anonymous'
+            p_url['user'] = res.username or self.DEFAULT_USER
             p_url['pass'] = res.password or ''
 
         #logger.debug('parsed URL: {scheme}://{host}:{port}{path}, user={user}, pass={pass}'.format(**p_url))
@@ -114,7 +116,6 @@ class MSMirrorFS(MSMirror):
     __tablename__ = 'mirror_fs'
 
     id = Column(Integer, ForeignKey('mirror.id'), primary_key=True)
-    #path = Column(String(256), nullable=False, unique=True)
 
     __mapper_args__ = {
         'polymorphic_identity': 'mirror_fs',
@@ -138,74 +139,57 @@ class MSMirrorFS(MSMirror):
             raise InvalidPathError(nurl)
         return nurl
 
+    # This walk is slightly different from FTP/SFTP walk
+    # Does not yield root, dirs, files
     def walk(self):
         logger.info('scanning path %s', self.url)
-        #files_parsed = files_skipped = total_files = 0
-        #new_files = list()
-        #known_files = self.existing_files
-
-        # Walk through filesystem
-        # Iterate over files, checking if new or existing
-        # Store in a temporary array
         for root, dirs, files in os.walk(self.url):
             logger.debug('descending into %s: %d files, %d directories found', root, len(files), len(dirs))
-            #total_files += len(files)
-            #l_files_parsed = 0
 
             for name in files:
-                #if files_parsed % 10 == 0 and files_parsed > 0:
-                #    logger.debug('status: %d skipped, %d new, %d parsed, %d total (%2.0f%% complete)',
-                #                 files_skipped, len(new_files), files_parsed, total_files, l_files_parsed / float(len(files)) * 100)
-
-                filename = os.path.join(root, name)
-                #logger.info('checking [%d/%d]: %s', files_parsed + 1, total_files, filename)
-
-                ## TODO: Do we use MSFile here for local FS?
-                ## What to do for other protocols?
-                ## We need metadata at minimum (size, mtime)
-                ##   and possible actual file data to compare hashes
-                yield filename
-
-                #existing_file = self.get_db_file(filename)
-                #if existing_file:
-                #    logger.info('file exists, skipping')
-                #    files_skipped += 1
-                #else:
-                #    logger.info('file new, marking for addition')
-                #    new_files.append(filename)
-                #
-                #files_parsed += 1
-                #l_files_parsed += 1
-
-        ## Exit without commit if no new files found
-        #if not new_files:
-        #    return list()
-
-        ##logger.info('%d new files found, adding to database', len(new_files))
-        #logger.info('%d new files found', len(new_files))
-        #return new_files
+                yield os.path.join(root, name)
 
 
-class MSMirrorFTP(MSMirror):
+class MSMirrorTCP(MSMirror):
+
+    hostname = Column(String(256))
+    port = Column(Integer)
+    username = Column(String(256))
+    password = Column(String(256))
+    path = Column(String(256))
+    params = Column(sqlalchemy_jsonfield.JSONField(enforce_string=False))
+
+    __mapper_args__ = {
+        'polymorphic_identity': 'mirror_tcp',
+    }
+
+
+class MSMirrorFTP(MSMirrorTCP):
     __tablename__ = 'mirror_ftp'
 
     id = Column(Integer, ForeignKey('mirror.id'), primary_key=True)
-    #url = Column(String(256), nullable=False, unique=True)
-    params = Column(sqlalchemy_jsonfield.JSONField(enforce_string=False))
 
     __mapper_args__ = {
         'polymorphic_identity': 'mirror_ftp',
     }
 
     DEFAULT_PORT = 21
+    DEFAULT_USER = 'anonymous'
 
     def __init__(self, url, params=None):
         p_url = self.urlparse(url)
         if p_url['scheme'] != 'ftp':
             raise InvalidSchemeError
 
+        # We do not parse host/port/user/pass/etc
+        # here, it's done at runtime
         self.url = url
         self.params = params
+
+        # ***NEW***
+        self.hostname = p_url['host']
+        self.username = p_url['user']
+        self.password = p_url['pass']
 
         # We cache filesize + mtime from directory listings
         self.f_size = {}
@@ -274,19 +258,17 @@ class MSMirrorFTP(MSMirror):
         return self.f_mtime.get(fname, -1)
 
 
-class MSMirrorSFTP(MSMirror, json.JSONEncoder):
+class MSMirrorSFTP(MSMirrorTCP, json.JSONEncoder):
     __tablename__ = 'mirror_sftp'
 
     id = Column(Integer, ForeignKey('mirror.id'), primary_key=True)
-    #url = Column(String(256), nullable=False, unique=True)
-    path = Column(String(256))
-    params = Column(sqlalchemy_jsonfield.JSONField(enforce_string=False))
 
     __mapper_args__ = {
         'polymorphic_identity': 'mirror_sftp',
     }
 
     DEFAULT_PORT = 22
+    DEFAULT_USER = os.environ['LOGNAME']
 
     def __init__(self, url, params=None):
         p_url = self.urlparse(url)
@@ -353,7 +335,6 @@ class MSMirrorFile(Base):
     file = relationship('MSFile', backref='mirrors')
     mirror_id = Column(Integer, ForeignKey('mirror.id'))
     mirror = relationship('MSMirror', backref='files')
-    #filename = Column(String(256), nullable=False, unique=True)
 
     def __init__(self, src_file, src_mirror):
         self.file = src_file
