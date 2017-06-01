@@ -14,6 +14,7 @@ from datetime import datetime
 import time
 
 import tempfile
+import urlparse
 import shutil
 
 import logging
@@ -119,7 +120,7 @@ class MSManager(object):
                 # We do not check presence of a correct
                 # repo in functions, they will fail
                 # when executed at some point.
-                logger.warning('manager invoked without repo, continuing without initialization')
+                logger.info('manager invoked without repo, continuing without initialization')
                 return
             else:
                 raise NoRepoError
@@ -415,8 +416,13 @@ class MSManager(object):
 
     ### Mirror functions ###
     # Pull mirror from DB
-    def get_mirror(self, host):
-        mirror = self.sasession.query(MSMirror).filter(MSMirror.url == host).one()
+    def get_mirror(self, url):
+        logger.debug('retriving mirror on %s', url)
+        res = urlparse.urlparse(url)
+        host = res.hostname
+        path = res.path or '/'
+        logger.debug('%s', self.sasession.query(MSMirror).all())
+        mirror = self.sasession.query(MSMirror).filter(MSMirror.hostname == host).filter(MSMirror.path == path).one()
         return mirror
 
     # Add a mirror to DB
@@ -438,23 +444,24 @@ class MSManager(object):
     # "local" data first) and then compare each to mirror_file?
     # Do we combine functionality in one method?
     # Do we skip local files?
-    def verify_host_files(self, host):
-        mirror = self.get_mirror(host)
+    def verify_host_files(self, url):
+        mirror = self.get_mirror(url)
         if not mirror:
-            logger.error('unable to find mirror %s', host)
+            logger.error('unable to find mirror %s', url)
             return
 
         logger.info('verifying files on mirror %s', mirror)
         for mf in mirror.files:
             logger.info(mf)
+            # nop #
 
     # Wrapper to call walk_scan_mirror with a host
-    def walk_scan_host(self, host, path):
-        mirror = self.get_mirror(host)
+    def walk_scan_host(self, url):
+        mirror = self.get_mirror(url)
         if not mirror:
-            logger.error('unable to find mirror %s', host)
+            logger.error('unable to find mirror %s', url)
             return
-        self.walk_scan_mirror(mirror, path)
+        self.walk_scan_mirror(mirror)
 
     # Walk through mirror and scan files
     # Look for matches to existing files
@@ -464,13 +471,13 @@ class MSManager(object):
     # (this would be expensive, involving download
     # of all data from mirror and storing in a
     # temporary location to compute data)
-    def walk_scan_mirror(self, mirror, path):
+    def walk_scan_mirror(self, mirror):
         logger.debug('scanning mirror %s', mirror)
         if not mirror.connect():
             logger.error('unable to connect, aborting')
             return
 
-        for mpath, mdirs, mfiles in mirror.walk(path):
+        for mpath, mdirs, mfiles in mirror.walk():
             for mfile in mfiles:
                 mfile_path = os.path.join(mpath, mfile)
                 size = mirror.get_size(mfile_path)

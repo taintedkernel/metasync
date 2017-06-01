@@ -39,6 +39,22 @@ plogger.setLevel(logging.INFO)
 ######################
 
 
+class InvalidSchemeError(Exception):
+    pass
+
+class MissingCredentialsError(Exception):
+    pass
+
+class InvalidPathError(Exception):
+
+    def __init__(self, filename):
+        super(Exception, self).__init__(filename)
+        self.filename = filename
+
+    def __str__(self):
+         return "Path {0} not found".format(self.filename)
+
+
 def build_mirror(location, params):
     mirror = None
     res = urlparse.urlparse(location)
@@ -55,26 +71,13 @@ def build_mirror(location, params):
     return mirror
 
 
-class InvalidSchemeError(Exception):
-    pass
-
-class InvalidPathError(Exception):
-    def __init__(self, filename):
-        super(Exception, self).__init__(filename)
-        self.filename = filename
-
-    def __str__(self):
-         return "Path {0} not found".format(self.filename)
-
-class MissingCredentialsError(Exception):
-    pass
-
 class MSMirror(Base, json.JSONEncoder):
     __tablename__ = 'mirror'
 
     id = Column(Integer, primary_key=True)
     type = Column(String(64), nullable=False)
-    url = Column(String(256), nullable=False, unique=True)
+    hostname = Column(String(256))
+    path = Column(String(256))
     last_check = Column(DateTime)
 
     __mapper_args__ = {
@@ -83,7 +86,7 @@ class MSMirror(Base, json.JSONEncoder):
     }
 
     def __repr__(self):
-        return '<MSMirror %s type=%s>' % (self.url, self.type)
+        return '<MSMirror %s:%s type=%s>' % (self.hostname, self.path, self.type)
 
     def urlparse(self, url):
         p_url = dict()
@@ -103,7 +106,8 @@ class MSMirror(Base, json.JSONEncoder):
         #logger.debug('parsed URL: %s', urlparse.urlunparse(res))
         return p_url
 
-    def connect(self, url):
+    @staticmethod
+    def connect(url):
         logger.debug('connecting to %s', url)
 
     def test_walk(self, path):
@@ -121,47 +125,55 @@ class MSMirrorFS(MSMirror):
         'polymorphic_identity': 'mirror_fs',
     }
 
-    def __init__(self, url):
+    # For MirrorFS, we take in "file://" url to init
+    # but otherwise url is not used (assumed localhost)
+    def __init__(self, url, params=None):
         p_url = self.urlparse(url)
         if p_url['scheme'] != 'file':
             raise InvalidSchemeError
         if p_url['host'] != None and p_url['host'] != 'localhost':
             raise InvalidSchemeError
 
-        logger.info('connecting to %s', url)
-        self.url = self.connect(p_url['path'])
+        self.params = params
+        self.hostname = 'localhost'
+        self.path = os.path.normpath(p_url['path'])
+        self.connect(self.path)
 
-    def connect(self, url=None):
-        url = url or self.url
-        super(MSMirrorFS, self).connect(url)
-        nurl = os.path.normpath(url)
-        if not os.path.isdir(nurl):
-            raise InvalidPathError(nurl)
-        return nurl
+    def connect(self):
+        super(MSMirrorFS, self).connect(self.path)
+        if not os.path.isdir(self.path):
+            raise InvalidPathError(self.path)
+        return True
 
-    # This walk is slightly different from FTP/SFTP walk
-    # Does not yield root, dirs, files
     def walk(self):
-        logger.info('scanning path %s', self.url)
-        for root, dirs, files in os.walk(self.url):
+        logger.info('scanning path %s', self.path)
+        for root, dirs, files in os.walk(self.path):
             logger.debug('descending into %s: %d files, %d directories found', root, len(files), len(dirs))
-
-            for name in files:
-                yield os.path.join(root, name)
+            yield root, dirs, files
 
 
 class MSMirrorTCP(MSMirror):
 
-    hostname = Column(String(256))
+    url = Column(String(256), nullable=False, unique=True)
+    #hostname = Column(String(256))
     port = Column(Integer)
     username = Column(String(256))
     password = Column(String(256))
-    path = Column(String(256))
     params = Column(sqlalchemy_jsonfield.JSONField(enforce_string=False))
 
     __mapper_args__ = {
         'polymorphic_identity': 'mirror_tcp',
     }
+
+    def __init__(self, url, params=None):
+        p_url = self.urlparse(url)
+        self.url = url
+        self.params = params
+        self.path = p_url['path']
+        self.hostname = p_url['host']
+        self.port = p_url['port']
+        self.username = p_url['user']
+        self.password = p_url['pass']
 
 
 class MSMirrorFTP(MSMirrorTCP):
@@ -177,25 +189,15 @@ class MSMirrorFTP(MSMirrorTCP):
     DEFAULT_USER = 'anonymous'
 
     def __init__(self, url, params=None):
+        super(MSMirrorFTP, self).__init__(url, params)
         p_url = self.urlparse(url)
         if p_url['scheme'] != 'ftp':
             raise InvalidSchemeError
 
-        # We do not parse host/port/user/pass/etc
-        # here, it's done at runtime
-        self.url = url
-        self.params = params
+        # We cache filesize + mtime
+        # from directory listings with FTP
+        self.init_on_load()
 
-        # ***NEW***
-        self.hostname = p_url['host']
-        self.username = p_url['user']
-        self.password = p_url['pass']
-
-        # We cache filesize + mtime from directory listings
-        self.f_size = {}
-        self.f_mtime = {}
-
-        #logger.info('connecting to %s', url)
         #self.connect()
 
     @orm.reconstructor
@@ -206,12 +208,10 @@ class MSMirrorFTP(MSMirrorTCP):
     def connect(self):
         super(MSMirrorFTP, self).connect(self.url)
         try:
-            #p_url = self.urlparse(url or self.url)
-            p_url = self.urlparse(self.url)
             self.conn = ftplib.FTP()
-            self.conn.connect(p_url['host'], p_url['port'])
-            self.conn.login(p_url['user'], p_url['pass'])
-            self.conn.cwd(p_url['path'])
+            self.conn.connect(self.hostname, self.port)
+            self.conn.login(self.username, self.password)
+            self.conn.cwd(self.path)
             return True
         except:
             return False
@@ -240,8 +240,9 @@ class MSMirrorFTP(MSMirrorTCP):
                 self.f_mtime[os.path.join(path, fname)] = dateparser.parse(mtime)
         return dirs, files
 
-    def walk(self, path):
-        path = os.path.join('/', path)
+    #def walk(self, path):
+    def walk(self):
+        path = os.path.join('/', self.path)
         dirs, files = self.listdir(path)
         #logger.debug('files : %s', files)
         yield path, dirs, files
@@ -271,15 +272,12 @@ class MSMirrorSFTP(MSMirrorTCP, json.JSONEncoder):
     DEFAULT_USER = os.environ['LOGNAME']
 
     def __init__(self, url, params=None):
+        super(MSMirrorSFTP, self).__init__(url, params)
         p_url = self.urlparse(url)
         if p_url['scheme'] != 'sftp':
             raise InvalidSchemeError
         if not params.get('key'):
             raise MissingCredentialsError
-
-        self.url = url
-        self.path = p_url['path']
-        self.params = params
 
     def connect(self):
         super(MSMirrorSFTP, self).connect(self.url)
@@ -287,44 +285,49 @@ class MSMirrorSFTP(MSMirrorTCP, json.JSONEncoder):
             self.client = SSHClient()
             self.client.load_system_host_keys()
             self.client.set_missing_host_key_policy(AutoAddPolicy())
-            self.client.connect('localhost', key_filename=self.params['key'])
-            self.sftp = self.client.open_sftp()
-            logger.debug('changing directory to %s', self.path)
-            self.sftp.chdir(self.path)
+            self.client.connect(self.hostname, key_filename=self.params['key'])
+            self.conn = self.client.open_sftp()
+            #logger.debug('changing directory to %s', self.path)
+            #self.conn.chdir(self.path)
             return True
         except:
             return False
 
     # https://gist.github.com/johnfink8/2190472
-    def walk(self, path=None):
-        logger.debug('self path=%s, called path=%s', self.path, path)
+    #def walk(self, path=None):
+    def walk(self):
+        #logger.debug('self path=%s, called path=%s', self.path, path)
         #npath = abspath_re.sub('', path)
-        npath = self.path_join(path)
-        logger.debug('walking path %s', npath)
         dirs = list()
         files = list()
-        for f in self.sftp.listdir_attr(npath):
+        #npath = self.path_join(self.path)
+        npath = self.path
+        logger.debug('walking path %s', npath)
+        for f in self.conn.listdir_attr(npath):
             if S_ISDIR(f.st_mode):
                 dirs.append(f.filename)
             else:
                 files.append(f.filename)
-        yield path, dirs, files
+        yield self.path, dirs, files
         for d in dirs:
             _path = os.path.join(path, d)
             for f in self.walk(_path):
                 yield f
 
+    # Custom os.path.join to remove any slash prefix
     def path_join(self, path):
         abspath_re = re.compile(r'^/+')
         return os.path.join(self.path, abspath_re.sub('', path))
 
     def get_size(self, fname):
         logger.debug('checking size on %s', fname)
-        logger.debug('%s', self.path_join(fname))
-        return self.sftp.lstat(self.path_join(fname)).st_size
+        #logger.debug('%s', self.path_join(fname))
+        #return self.conn.lstat(self.path_join(fname)).st_size
+        return self.conn.lstat(fname).st_size
 
     def get_mtime(self, fname):
-        return self.sftp.lstat(self.path_join(fname)).st_mtime
+        #return self.conn.lstat(self.path_join(fname)).st_mtime
+        return self.conn.lstat(fname).st_mtime
 
 
 class MSMirrorFile(Base):
@@ -346,7 +349,7 @@ class MSMirrorFile(Base):
 
 #
 # mirror_sftp
-# id=1 host=sftp://user:pass@my.pictures.com/
+# id=1 host=sftp://user:pass@my.pictures.com/ path=/backup
 #
 # mirror_fs
 # id=2 host=/export/backup/newbackup/
