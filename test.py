@@ -11,6 +11,8 @@ import re
 import click
 from click.testing import CliRunner
 
+import colorlog
+
 from metasync.manager import MSManager
 
 
@@ -99,12 +101,12 @@ def ms_walk_scan_mirror(url, repo, db):
 
 
 @click.command()
-@click.argument('host')
+@click.argument('url')
 @click.option('--repo', help='root repository to use')
 @click.option('--db', default=os.path.join(os.getcwd(), 'metasync.db'), help='location of database')
 #@click.option('--path', default='/', help='path to walk')
 #def ms_verify_host_files(host, path, db):
-def ms_verify_host_files(host, repo, db):
+def ms_verify_host_files(url, repo, db):
     pnames = ('verify', 'strong_verify', 'dry')
     args = ('none', False, False)
     params = dict(zip(pnames, args))
@@ -113,7 +115,7 @@ def ms_verify_host_files(host, repo, db):
     mgr = MSManager(db, repo, params)
     logger.info('manager loaded')
 
-    mgr.verify_host_files(host)
+    mgr.verify_host_files(url)
 
 
 ##### Helper functions #####
@@ -525,7 +527,7 @@ def test_sftp_scan_match():
 #  - Create mock data, add to DB
 #  - Copy mock data to new, separate path for SFTP
 #  - Test connectivity with mirror SFTP
-#  - Test scanning of mirror to match original files
+#  - Test scanning of mirror to match original files (simulate mirror copy)
 #  - Test rename of local file, detection of change
 #  - Test propagation of local rename to mirror SFTP data
 #
@@ -533,6 +535,11 @@ def test_sftp_scan_match_rename():
     logger.info('--- running test_sftp_scan_match_rename  ---')
     runner = CliRunner()
     with runner.isolated_filesystem():
+        # TODO: test_data_path needs to be separate subdirectory,
+        # when we re-run ms_add below it captures the SFTP directory as well
+        # It should be something like this:
+        # - tmpdir/test_data_path
+        # - tmpdir/sftp_mirror_path
         (test_db_path, test_data_path, test_file_path) = _setup_log_mock_data(runner)
 
         # Create new temp directory and copy file
@@ -583,7 +590,7 @@ def test_sftp_scan_match_rename():
         assert 'verification completed, 1 files missing' in test_log_data
 
         logger.debug('loading ms_verify_host_files')
-        result = runner.invoke(ms_verify_host_files, [url, '--db', test_db_path])
+        result = runner.invoke(ms_verify_host_files, [url, '--repo', test_data_path, '--db', test_db_path])
         #test_log_data = _test_exitcode_logs(result)
 
         # Then test propagation of changes to mirror
@@ -593,11 +600,14 @@ def test_sftp_scan_match_rename():
 # Configure logging
 logger = logging.getLogger()
 logger.setLevel(logging.DEBUG)
-ch = logging.StreamHandler()
+#ch = logging.StreamHandler()
+ch = colorlog.StreamHandler()
 ch.setLevel(logging.DEBUG)
-formatter = logging.Formatter('%(asctime)s - %(name)s:%(lineno)d - %(levelname)s - %(message)s')
+#formatter = logging.Formatter('%(asctime)s - %(name)s:%(lineno)d - %(levelname)s - %(message)s')
+formatter = colorlog.ColoredFormatter('%(asctime)s - %(name)s:%(lineno)d - %(log_color)s%(levelname)s - %(message)s')
 ch.setFormatter(formatter)
 logger.addHandler(ch)
+
 
 # We also log to file so the tests can read log messages
 # and verify functionality.  Not an ideal way, but works

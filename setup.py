@@ -13,7 +13,8 @@ setup(
         'paramiko',
         'sqlalchemy_jsonfield',
         'pyftpdlib',
-        'dateparser'
+        'dateparser',
+        'colorlog'
     ],
     entry_points='''
         [console_scripts]

@@ -452,7 +452,8 @@ class MSManager(object):
 
         logger.info('verifying files on mirror %s', mirror)
         for mf in mirror.files:
-            logger.info(mf)
+            logger.info(mf.file)
+            logger.info(mf.mirror)
             # nop #
 
     # Wrapper to call walk_scan_mirror with a host
