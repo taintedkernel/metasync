@@ -19,6 +19,20 @@
 # corruption/bad data
 #
 
+#
+# Future ideas:
+# - Reimplement in Python, integrate with metasync as
+#     separate functionality
+# - Possibly do EXIF datetime adjustment for TZ/location
+#     Would be non-trivial, maybe easier to keep using 
+#     excellent regex.info GPS plugin and perform file
+#     rename/sync with new datetime while within LR
+#     catalog.  Want to avoid solely external rename
+#     which would cause a rescan of catalog/on disk
+#     data.  Maybe a LR plugin to a post-import file
+#     rename would work.
+#
+
 
 ### Do the rsync ###
 function do_backup()
@@ -39,8 +53,6 @@ function do_backup()
 #
 SRC1="/Volumes/Untitled"
 SRC2="/Volumes/NO NAME"
-#DEST="/Volumes/SD Backup/Backup"
-DEST="/Volumes/Photography/SD Backup"
 
 # Check to ensure that one of SRC1 or SRC2 paths exist
 if [ ! -d "$SRC1" -a ! -d "$SRC2" ]; then
@@ -56,13 +68,25 @@ elif [ -d "$SRC2" ]; then
 fi
 SRCDATA="$SRC/DCIM/100MSDCF"
 
+if [ -z "$1" ]; then
+    echo "[error] Destination argument required (one of [sdbackup, photography]), aborting"
+    exit 1
+elif [ "$1" == "sdbackup" ]; then
+    DEST="/Volumes/SD Backup/Backup"
+elif [ "$1" == "photography" ]; then
+    DEST="/Volumes/Photography/SD Backup"
+else
+    echo "[error] Destination argument $1 invalid, aborting"
+    exit 1
+fi
+
 # Check to ensure that DEST path exists
 if [ ! -d "$DEST" ]; then
     echo "[error] Destination path $DEST not detected, aborting"
     exit 1
 fi
 
-if [ "$1" == "--backup" ]; then
+if [ "$2" == "--backup" ]; then
     BACKUP="y"
 else
     BACKUP="n"
@@ -82,7 +106,7 @@ echo
 ID=$(cat "$SRC/id.txt" 2>/dev/null)
 if [ "$ID" == "" ]; then
     echo "[error] No ID on card (at $SRC/id.txt) detected"
-    read -p "Create? (y/n): " CREATE
+    read -p "Create? [y/N]: " CREATE
 
     if [ "$CREATE" == "y" -o "$CREATE" == "Y" ]; then
         ID=$(python -c "import uuid; print str(uuid.uuid1()).upper()")
@@ -98,8 +122,6 @@ echo "Source ID $ID detected"
 
 ##echo rsync -avn --filter="+ DCIM/" --filter="+ DCIM/**" --filter="- *" /Volumes/Untitled/ "/Volumes/SD Backup/Backup/EA2E5044-EB98-43E8-B251-98C5ED0B484B"
 #rsync -avn --filter="+ DCIM/" --filter="+ DCIM/**" --filter="- *" $SRCDATA "$DEST/$ID"
-#echo -n 'rsync -avn --filter="+ DCIM/" --filter="+ DCIM/**" --filter="- *" '
-#echo $SRCDATA \"$DEST/$ID\"
 
 ### Copy data
 echo
@@ -107,12 +129,13 @@ echo "Starting rsync"
 echo "Command:"
 echo "rsync -avn --progress \"$SRCDATA/\" \"$DEST/$ID\""
 rsync -avn --progress "$SRCDATA/" "$DEST/$ID"
+# TODO: Detect state where no data needs to be copied
 
 # This can be improved
 if [ "$BACKUP" == "y" -o "$BACKUP" == "Y" ]; then
     do_backup "$SRCDATA/" "$DEST/$ID"
 else
-    read -p "Perform backup? (y/n): " BACKUP
+    read -p "Perform backup? [y/N]: " BACKUP
     if [ "$BACKUP" == "y" -o "$BACKUP" == "Y" ]; then
         do_backup "$SRCDATA/" "$DEST/$ID"
     else
@@ -132,6 +155,8 @@ fi
 
 # Iterate through $DEST and for each file grep checksum file
 # Calculate any that are missing (eg: newly copied data)
+# Inefficient, but simple method
+# TODO: Some sort of progress, eg: [current file #/total file #]
 rm md5sum.new 2>/dev/null
 for f in `/bin/ls`;
 do {
@@ -140,6 +165,7 @@ do {
     fi
     MD5=$(grep $f md5sum.txt 2>/dev/null)
     if [ "$MD5" == "" ]; then
+        # TODO: Provide count + total for progress
         echo "Checksum for $f missing, calculating"
         md5sum "$f" >> md5sum.new
     fi
@@ -148,10 +174,13 @@ do {
 # If not commited, no automatic way to recalculate
 # That functionality could be added as a different
 # mode of invocation.
-read -p "Commit checksums to md5sum.txt? " COMMIT_MD5
+read -p "Append new checksums to md5sum.txt? [y/N]: " COMMIT_MD5
 if [ "$COMMIT_MD5" == "y" -o "$COMMIT_MD5" == "Y" ]; then
     cat md5sum.new >> md5sum.txt
     rm md5sum.new 2>/dev/null
+else
+    echo "Skipping modification of md5sum.txt"
+    echo "Calculated new file checksums stored in md5sum.new"
 fi
 
 # Fin #

@@ -15,8 +15,8 @@ to an external location.
 In terms of implementation, metasync keeps an internal database of files
 and attemps to determine changes over time through periodic invocation.  If
 too many changes happen simultaneously (file contents updated, rename and move)
-it may be difficult for the application to directly detect the correct
-solution, in which case it will skip, prompt, or abort - especially if lots
+it may be difficult for metasync to directly detect the correct solution,
+in which case it will skip, prompt, or abort - especially if lots
 of other similar changes were occuring in the same "snapshot".
 
 Functionality/modes-of-operation:
@@ -24,13 +24,14 @@ Functionality/modes-of-operation:
 1. Periodic sync on local source-of-truth filesystem data
 
    This will detect and interally update any changes to files on disk.
+   No changes are made to on-disk bytes, except for the metasync database.
 
 2. Reconcilation with external backup / mirror sync
 
    When pointed to an external mirror, it will determine what changes
    have not been propagated over and can generate a script which will
    re-create these, or optionally perform the operation itself (if
-   write access is possible)
+   direct write access is possible)
 
 3. Bitrot detection
 
