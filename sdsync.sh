@@ -20,6 +20,18 @@
 #
 
 #
+# TODO:
+# Usage:
+#   sdsync.sh [-b] [-s SRC] DEST
+#
+#   -b will cause a backup to be run immediately, skipping
+#        the dry-run
+#   -s will supply a specific SRC folder (if not provided,
+#          will attempt to auto-detect)
+#   DEST is the backup destination, shortcuts can be used
+#
+
+#
 # Future ideas:
 # - Reimplement in Python, integrate with metasync as
 #     separate functionality
@@ -46,6 +58,20 @@ function do_backup()
 
 ### main() ###
 
+#ARGS=`getopt bs: $*`
+#if [ "$?" != 0 ]; then
+#    echo "Usage: $0 [-b] [-s SRC] DEST"
+#    exit 2
+#fi
+#set -- $ARGS
+#
+#for i
+#do
+#    case "$i"
+#    in
+#        -b)
+#            BACKUP=1
+
 #
 # TODO: Autodetect SRC (eg: SD card)
 # This may be good place to start?
@@ -66,7 +92,18 @@ if [ -d "$SRC1" ]; then
 elif [ -d "$SRC2" ]; then
     SRC=$SRC2
 fi
+
+# Determine which data to backup
+# TODO: Support handling multiple sources with one execution
 SRCDATA="$SRC/DCIM/100MSDCF"
+#SRCDATA="$SRC/DCIM/101PHOTO"
+#SRCDATA="$SRC/DCIM/102SAVED"
+#SRCDATA="$SRC/PRIVATE/M4ROOT/CLIP"
+
+if [ ! -d "$SRCDATA" ]; then
+    echo "[error] Source path $SRCDATA not detected, aborting"
+    exit 1
+fi
 
 if [ -z "$1" ]; then
     echo "[error] Destination argument required (one of [sdbackup, photography]), aborting"
@@ -131,6 +168,17 @@ echo "rsync -avn --progress \"$SRCDATA/\" \"$DEST/$ID\""
 rsync -avn --progress "$SRCDATA/" "$DEST/$ID"
 # TODO: Detect state where no data needs to be copied
 
+# Show potential differences
+echo
+echo -n "Source size (MB): "
+du -sm "$SRCDATA"
+echo -n "Destination size (MB): "
+if [ ! -d "$DEST/$ID" ]; then
+    echo "0 $DEST/$ID"
+else
+    du -sm "$DEST/$ID"
+fi
+
 # This can be improved
 if [ "$BACKUP" == "y" -o "$BACKUP" == "Y" ]; then
     do_backup "$SRCDATA/" "$DEST/$ID"
@@ -162,6 +210,8 @@ for f in `/bin/ls`;
 do {
     if [ "$f" == "md5sum.txt" ]; then
         continue
+    elif [[ "$f" == *"xmp" ]]; then
+        continue
     fi
     MD5=$(grep $f md5sum.txt 2>/dev/null)
     if [ "$MD5" == "" ]; then
@@ -182,6 +232,9 @@ else
     echo "Skipping modification of md5sum.txt"
     echo "Calculated new file checksums stored in md5sum.new"
 fi
+
+# TODO: Calculate checksums of original files & verify
+echo "Files synced to $DEST/$ID"
 
 # Fin #
 exit 0
