@@ -34,6 +34,7 @@ class ContextFilter(logging.Filter):
 
 
 ### Invocations ###
+# Verify existing files in DB
 @click.command()
 @click.option('--repo', help='root repository to use')
 @click.option('--db', default=os.path.join(os.getcwd(), 'metasync.db'), help='location of database')
@@ -48,6 +49,7 @@ def ms_verify(repo, db, verify, dedup):
     sys.exit(0)
 
 
+# Scan for new files, verify these then add to DB
 @click.command()
 @click.option('--repo', help='root repository to use')
 @click.option('--db', default=os.path.join(os.getcwd(), 'metasync.db'), help='location of database')
@@ -65,6 +67,7 @@ def ms_add(repo, db, verify, dedup):
     sys.exit(0)
 
 
+# Create new mirror
 @click.command()
 @click.argument('host')
 @click.option('--key', default=None, help='keyfile to connect to remote server')
@@ -84,6 +87,8 @@ def ms_add_mirror(host, key, db):
     mgr.add_mirror(host, {'key': key})
 
 
+# Scan mirror for new files
+# Check new files against existing files in DB, add if match
 @click.command()
 @click.argument('url')
 @click.option('--repo', help='root repository to use')
@@ -100,13 +105,14 @@ def ms_walk_scan_mirror(url, repo, db):
     mgr.walk_scan_host(url)
 
 
+# Iterate through files stored on a mirror and verify status
 @click.command()
 @click.argument('url')
 @click.option('--repo', help='root repository to use')
 @click.option('--db', default=os.path.join(os.getcwd(), 'metasync.db'), help='location of database')
 #@click.option('--path', default='/', help='path to walk')
 #def ms_verify_host_files(host, path, db):
-def ms_verify_host_files(url, repo, db):
+def ms_verify_update_host_files(url, repo, db):
     pnames = ('verify', 'strong_verify', 'dry')
     args = ('none', False, False)
     params = dict(zip(pnames, args))
@@ -115,7 +121,7 @@ def ms_verify_host_files(url, repo, db):
     mgr = MSManager(db, repo, params)
     logger.info('manager loaded')
 
-    mgr.verify_host_files(url)
+    mgr.verify_update_host_files(url)
 
 
 ##### Helper functions #####
@@ -148,6 +154,7 @@ def _setup_ftpd(path):
 def _setup_log_mock_data(runner, invoke=True):
 
     # Create new directory, write some temp data
+    # eg: <isolated_fs>/files/tmpfileXXX
     logger.debug('creating mock file data')
     test_db_path = os.path.join(os.getcwd(), TEST_DB)
     test_data_path = os.path.join(os.getcwd(), 'files')
@@ -175,6 +182,10 @@ def _setup_log_mock_data(runner, invoke=True):
 #
 # Parse our logs, checking for problems, return for further verification
 # Check exit code
+#
+# TODO: Ideally, we should have ability to check portion of logs,
+#   from the most recent check until now to have finer-grained control
+#   of checking levels
 #
 def _test_exitcode_logs(result, expect_warnings=False, regex=None):
     logger.debug('result: %s', result)
@@ -446,7 +457,8 @@ def test_ftp_scan_match():
             ftpd.join()
             return
 
-        # TODO: We need to validate test file is matched
+        # TODO: We need to actually validate test file is matched
+        # Currently we just ensure no invalid log messages occur
         logger.debug('loading metasync:ms_walk_scan_mirror')
         try:
             result = runner.invoke(ms_walk_scan_mirror, [url, '--repo', test_data_path, '--db', test_db_path], catch_exceptions=False)
@@ -512,7 +524,8 @@ def test_sftp_scan_match():
 
         test_log_data = _test_exitcode_logs(result)
 
-        # TODO: We need to validate test file is matched
+        # TODO: We need to actually validate test file is matched
+        # Currently we just ensure no invalid log messages occur
         logger.debug('loading metasync:ms_walk_scan_mirror')
         result = runner.invoke(ms_walk_scan_mirror, [url, '--repo', test_data_path, '--db', test_db_path])
         #result = runner.invoke(ms_walk_scan_mirror, [url, '--db', test_db_path])
@@ -529,36 +542,64 @@ def test_sftp_scan_match():
 #  - Test connectivity with mirror SFTP
 #  - Test scanning of mirror to match original files (simulate mirror copy)
 #  - Test rename of local file, detection of change
+#  - Test identification of local rename not propagated to mirror (out-of-sync)
 #  - Test propagation of local rename to mirror SFTP data
 #
+
+# test_db_path          = <isolated_fs>/test.db
+# test_data_path        = <isolated_fs>/files/
+# test_file_path        = <isolated_fs>/files/tmpfileXXX
+
+# sftp_path             = <isolated_fs>/sftp_path/
+# new_test_file_path    = <isolated_fs>/sftp_path/tmpfileXXX
+
+# copy first test file to sftp path for mirror copy
+# cp
+#   <isolated_fs>/files/tmpfileXXX
+#   <isolated_fs>/sftp_path/tmpfileXXX
+
+# make mirror at sftp_path, add data copied above
+
+# rename existing test file to new name
+# new_test_file_path    = <isolated_fs>/files/tmpfileYYY
+# mv
+#   <isolated_fs>/files/tmpfileXXX
+#   <isolated_fs>/flies/tmpfileYYY
+
 def test_sftp_scan_match_rename():
     logger.info('--- running test_sftp_scan_match_rename  ---')
     runner = CliRunner()
     with runner.isolated_filesystem():
-        # TODO: test_data_path needs to be separate subdirectory,
-        # when we re-run ms_add below it captures the SFTP directory as well
-        # It should be something like this:
-        # - tmpdir/test_data_path
-        # - tmpdir/sftp_mirror_path
+        # test_db_path = <isolated_fs>/test.db
+        # test_data_path = <isolated_fs>/files/
+        # test_file_path = <isolated_fs>/files/tmpfileXXX
         (test_db_path, test_data_path, test_file_path) = _setup_log_mock_data(runner)
 
         # Create new temp directory and copy file
-        tmp_path = os.path.join(test_data_path, 'tmpdir')
-        new_test_file_path = os.path.join(tmp_path, os.path.basename(test_file_path))
-        logger.debug('creating new temporary directory %s', tmp_path)
-        if not os.path.exists(tmp_path):
-            os.mkdir(tmp_path)
+        # sftp_path = <isolated_fs>/sftp_dir/
+        # new_test_file_path = <isolated_fs>/sftp_dir/tmpfileXXX
+        sftp_path = os.path.join(os.getcwd(), 'sftp_dir')
+        new_test_file_path = os.path.join(sftp_path, os.path.basename(test_file_path))
+        logger.debug('creating new temporary directory %s', sftp_path)
+        if not os.path.exists(sftp_path):
+            os.mkdir(sftp_path)
         logger.debug('copying %s to %s', test_file_path, new_test_file_path)
+        # eg:
+        # cp <isolated_fs>/files/tmpfileXXX <isolated_fs>/sftp_dir/tmpfileXXX
         shutil.copy(test_file_path, new_test_file_path)
 
+        # Ensure file copy finished
         time.sleep(2)
+
+        # Create mirror at <isolated_fs>/sftp_dir/
         logger.debug('loading metasync:ms_add_mirror')
-        url = SFTP_URL.format(path=tmp_path)
+        url = SFTP_URL.format(path=sftp_path)
         result = runner.invoke(ms_add_mirror, [url, '--key', SSH_KEY, '--db', test_db_path])
 
         test_log_data = _test_exitcode_logs(result, expect_warnings=True)
 
-        # TODO: We need to validate test file is matched
+        # TODO: We need to actually validate test file is matched
+        # Currently we just ensure no invalid log messages occur
         logger.debug('loading metasync:ms_walk_scan_mirror')
         result = runner.invoke(ms_walk_scan_mirror, [url, '--repo', test_data_path, '--db', test_db_path])
 
@@ -566,34 +607,46 @@ def test_sftp_scan_match_rename():
 
         # Now we rename our local source data
         logger.info('renaming local source data')
+        # new_test_file_path = <isolated_fs>/files/tmpfileYYY
         (new_test_file, new_test_file_path) = tempfile.mkstemp(dir=test_data_path)
         os.close(new_test_file)
         # This isn't an atomic operation, but
         # for our purposes it should be sufficient
         os.remove(new_test_file_path)
         os.rename(test_file_path, new_test_file_path)
+        # eg: mv <isolated_fs>/files/tmpfileXXX <isolated_fs>/files/tmpfileYYY
+        logger.debug('moved %s to %s', test_file_path, new_test_file_path)
 
-        # Reload metasync, ensure changes are detected
+        # Reload metasync, ensure rename is detected
         logger.debug('loading metasync:ms_add')
         result = runner.invoke(ms_add, ['--repo', test_data_path, '--db', test_db_path])
 
-        # We expect a WARNING here
+        # Test, we expect a WARNING here
         l_test_file_path = os.path.relpath(test_file_path, test_data_path)
         l_new_test_file_path = os.path.relpath(new_test_file_path, test_data_path)
         match_found_msg = '^.*match on .*%s.* found with .*%s.*$' % (l_test_file_path, l_new_test_file_path)
         update_file_msg = '^.*updating missing file .*%s.* to match new .*%s.*$' % (l_test_file_path, l_new_test_file_path)
         regex = [match_found_msg, update_file_msg]
         test_log_data = _test_exitcode_logs(result, expect_warnings=True, regex=regex)
-
         file_missing_msg = 'WARNING - %s missing' % l_test_file_path
         assert file_missing_msg in test_log_data
         assert 'verification completed, 1 files missing' in test_log_data
 
-        logger.debug('loading ms_verify_host_files')
-        result = runner.invoke(ms_verify_host_files, [url, '--repo', test_data_path, '--db', test_db_path])
-        #test_log_data = _test_exitcode_logs(result)
+        # Propagate changes to mirror!
+        logger.debug('loading ms_verify_update_host_files')
+        result = runner.invoke(ms_verify_update_host_files, [url, '--repo', test_data_path, '--db', test_db_path])
+        renaming_msg = '^.*renaming mirror %s to match local %s.*$' % (l_test_file_path, l_new_test_file_path)
+        # We don't expect warnings in the call to ms_verify_update_host_files,
+        # but this function checks the entire log and we do not have a mechanism
+        # to test a subset of logs currently (we expected warnings above)
+        test_log_data = _test_exitcode_logs(result, expect_warnings=True, regex=[renaming_msg])
 
-        # Then test propagation of changes to mirror
+        # Test propagation of changes
+        logger.debug('re-loading ms_verify_update_host_files')
+        result = runner.invoke(ms_verify_update_host_files, [url, '--repo', test_data_path, '--db', test_db_path])
+        up2date_msg = '^.*mirror up to date with local.*%s' % (l_new_test_file_path)
+        test_log_data = _test_exitcode_logs(result, expect_warnings=True, regex = [up2date_msg])
+
         logger.debug('--- test passed ---')
 
 
@@ -604,7 +657,7 @@ logger.setLevel(logging.DEBUG)
 ch = colorlog.StreamHandler()
 ch.setLevel(logging.DEBUG)
 #formatter = logging.Formatter('%(asctime)s - %(name)s:%(lineno)d - %(levelname)s - %(message)s')
-formatter = colorlog.ColoredFormatter('%(asctime)s - %(name)s:%(lineno)d - %(log_color)s%(levelname)s - %(message)s')
+formatter = colorlog.ColoredFormatter('%(asctime)s - %(name)20s:%(lineno)-4d - %(log_color)s%(levelname)-7s - %(message)s')
 ch.setFormatter(formatter)
 logger.addHandler(ch)
 

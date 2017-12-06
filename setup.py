@@ -6,12 +6,14 @@ setup(
     packages=find_packages(),
     include_package_data=True,
     install_requires=[
-        'sqlalchemy',
+        'SQLalchemy',
         'Click',
         'python-dateutil',
         'nose',
         'paramiko',
         'sqlalchemy_jsonfield',
+        'pysendfile',
+        'pyopenssl',
         'pyftpdlib',
         'dateparser',
         'colorlog'

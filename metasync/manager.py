@@ -10,7 +10,7 @@ try:
 except ImportError:
     import json
 
-from datetime import datetime
+from datetime import datetime, timedelta
 import time
 
 import tempfile
@@ -26,6 +26,12 @@ from repo import MSRepo
 from file import MSFile
 from mirror import build_mirror, MSMirror, MSMirrorFS, MSMirrorSFTP, MSMirrorFile
 from main import Base, FileMissingError, NullHashError, DefaultEncoder
+
+
+# Max timestamp difference to determine
+# file has been modified on remote system
+# May need to be adjusted and clocks must be in sync!
+MAX_TS_DELTA = 60
 
 
 logger = logging.getLogger(__name__)
@@ -46,8 +52,8 @@ class MSExecution(Base):
     timestamp = Column(DateTime, nullable=False)
     result = Column(String(64))
 
-    def __init__(self, ts=datetime.now()):
-        self.timestamp = ts
+    def __init__(self, ts=None):
+        self.timestamp = datetime.now() if ts is None else ts
 
 
 ######################
@@ -67,11 +73,11 @@ class MSHistory(Base, json.JSONEncoder):
     execution_id = Column(Integer, ForeignKey('execution.id'))
     execution = relationship('MSExecution', backref='history')
 
-    def __init__(self, hfile, data, execution, status='update', ts=datetime.now()):
+    def __init__(self, hfile, data, execution, status='update', ts=None):
         self.file = hfile
         self.status = status
         self.data = data
-        self.timestamp = ts
+        self.timestamp = datetime.now() if ts is None else ts
         self.execution = execution
 
     # TODO: fix this ugly hack
@@ -134,9 +140,8 @@ class MSManager(object):
         # Reconcile the DB data with on-disk bits
         if len(self.existing_files) == 0:
             logger.info('database empty/new, skipping verification')
-            return
-
-        self.verify_files()
+        else:
+            self.verify_files()
 
     ### Get a repo ###
     def get_repo(self, repo_path):
@@ -278,7 +283,7 @@ class MSManager(object):
                         #new_history = missing_file.update(data)
                         self.sasession.add(missing_file)
                         self.sasession.add(new_history)
-                        #self.sasession.commit()
+                        self.sasession.commit()
                         missing_file.show_history()
                     continue
 
@@ -417,11 +422,11 @@ class MSManager(object):
     ### Mirror functions ###
     # Pull mirror from DB
     def get_mirror(self, url):
-        logger.debug('retriving mirror on %s', url)
+        # logger.debug('retriving mirror on %s', url)
         res = urlparse.urlparse(url)
         host = res.hostname
         path = res.path or '/'
-        logger.debug('%s', self.sasession.query(MSMirror).all())
+        # logger.debug('%s', self.sasession.query(MSMirror).all())
         mirror = self.sasession.query(MSMirror).filter(MSMirror.hostname == host).filter(MSMirror.path == path).one()
         return mirror
 
@@ -440,21 +445,105 @@ class MSManager(object):
     #
     # Verify files on our mirror
     #
+    # Opposite approach of walk_scan_mirror, here
+    # we iterate through our local files and check against
+    # what's on the mirror
+    #
     # TODO: Thinking we either run verify_files (to validate
     # "local" data first) and then compare each to mirror_file?
     # Do we combine functionality in one method?
     # Do we skip local files?
-    def verify_host_files(self, url):
+    def verify_update_host_files(self, url):
+        logger.debug('verifying files on host %s', url)
         mirror = self.get_mirror(url)
         if not mirror:
             logger.error('unable to find mirror %s', url)
             return
+        if not mirror.connect():
+            logger.error('unable to connect, aborting')
+            return
 
-        logger.info('verifying files on mirror %s', mirror)
+        logger.info('verifying files on mirror %s, last check on %s', mirror, mirror.last_check)
+        missing_files = []
         for mf in mirror.files:
-            logger.info(mf.file)
-            logger.info(mf.mirror)
-            # nop #
+
+            # Determine current metadata at time of last mirror check
+            sync_metadata = mf.file.get_history_ts(mirror.last_check)
+            logger.debug('returned metadata: %s', sync_metadata)
+
+            # Metadata return only contains fields that were changed,
+            # meaning the data we're looking for may not be present
+            # in which case take it from the main file table
+            try:
+                sync_fn = sync_metadata['filename']
+            except KeyError:
+                sync_fn = mf.file.filename
+            try:
+                sync_size = sync_metadata['size']
+            except KeyError:
+                sync_size = mf.file.size
+            sync_mtime = datetime.strptime(sync_metadata['mtime'], '%Y-%m-%d %H:%M:%S')
+            sync_path = os.path.join(mirror.path, sync_fn)
+            logger.info('file %s mirrored to %s at time %s', mf.file, sync_path, mirror.last_check)
+
+            # We also get latest metadata from mirror, to ensure file
+            # has not been modified on remote host
+            try:
+                mirror_size = mirror.get_size(sync_path)
+                mirror_mtime = mirror.get_mtime(sync_path)
+            except IOError:
+                logger.warning('file %s not present, skipping', sync_path)
+                missing_files.append(sync_path)
+                continue
+            logger.info('found size %d, mtime %s on file %s', mirror_size, mirror_mtime, mf.file)
+
+            ### Sync logic ###
+            logger.debug('local/current file: fn=%s  size=%d  mtime=%s', mf.file.filename, mf.file.size, mf.file.mtime)
+            logger.debug('sync/history file:  fn=%s  size=%d  mtime=%s', sync_fn, sync_size, sync_mtime)
+            logger.debug('mirror file:        size=%d  mtime=%s', mirror_size, mirror_mtime)
+
+            # First we should check if mirror file has been modified
+            # since our last sync, this would be split-brain and we
+            # should warn user and prevent further action without
+            # confirmation. This indicates the mirror file has been
+            # modified without our knowledge and taking no automation
+            # action is safest course. However, since we intend to keep
+            # local data as source-of-truth we should have option to
+            # overwrite remote file data if user confirms.
+            if sync_size != mirror_size or abs(sync_mtime - mirror_mtime) > timedelta(MAX_TS_DELTA):
+                logger.error('remote file %s has been modified!', sync_fn)
+                continue
+
+            # Check if our local file has been renamed/moved
+            if sync_fn != mf.file.filename and mirror_size == mf.file.size:
+                # Try to perform a mv/rename here if possible,
+                # significantly more efficient and reduces off-chance of corruption
+                ### UNIT TEST ###
+                logger.info('renaming mirror %s to match local %s', sync_fn, mf.file.filename)
+                ### END ###
+
+                # TODO: We need to ensure that mf.filename does not exist on remote server already
+                # Rename API's used for Paramiko and ftplib *should* prevent overwrites, but not tested
+                # Rename <existing/old> to <new/local>
+                mirror.mv(sync_fn, mf.file.filename)
+
+            # Check if our local file has been updated
+            elif sync_fn == mf.file.filename and mirror_size != mf.file.size:
+                logger.info('syncing local %s to mirror %s', mf.file.filename, sync_fn)
+                # Copy <new/local> to <existing/remote>
+                mirror.sync(mf.file.filename, sync_fn)
+
+            else:
+                ### UNIT TEST ###
+                logger.debug('mirror up to date with local %s', mf.file)
+                ### END ###
+
+        for mf in missing_files:
+            logger.info('file %s missing', mf)
+
+        mirror.last_check = datetime.now()
+        self.sasession.add(mirror)
+        self.sasession.commit()
 
     # Wrapper to call walk_scan_mirror with a host
     def walk_scan_host(self, url):
@@ -464,9 +553,20 @@ class MSManager(object):
             return
         self.walk_scan_mirror(mirror)
 
+    #
     # Walk through mirror and scan files
     # Look for matches to existing files
     # Test on filename, size.
+    # If match, create association and store to DB
+    #
+    # To be used to add new mirror already populated
+    # with data and match against existing local data
+    # Mainly used for unittests, likely not needed
+    # by end user (since we intend to create new mirrors
+    # and sync data internally with application)
+    # This may be helpful if a user has an existing backup
+    # with recent data and wants to "import" this as a
+    # mirror into metasync
     #
     # TODO: Plan out if we want to verify hashes
     # (this would be expensive, involving download
@@ -497,3 +597,6 @@ class MSManager(object):
                     logger.debug('multiple matches found, skipping')
                 elif len(db_matches) == 0:
                     logger.debug('no matches found')
+
+        mirror.last_visit = datetime.now()
+        self.sasession.add(mirror)

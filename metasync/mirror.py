@@ -21,6 +21,7 @@ import urlparse
 import ftplib
 
 import logging
+import errno
 import shlex
 import sys
 import os
@@ -85,6 +86,9 @@ class MSMirror(Base, json.JSONEncoder):
         'polymorphic_on': type
     }
 
+    def __init__(self, url, params=None):
+        self.last_check = datetime.now()
+
     def __repr__(self):
         return '<MSMirror %s:%s type=%s>' % (self.hostname, self.path, self.type)
 
@@ -115,6 +119,9 @@ class MSMirror(Base, json.JSONEncoder):
             for mfile in mfiles:
                 logger.info('found mirror file %s', mfile)
 
+    def sync(self, src, dest):
+        raise NotImplementedError
+
 
 class MSMirrorFS(MSMirror):
     __tablename__ = 'mirror_fs'
@@ -128,6 +135,7 @@ class MSMirrorFS(MSMirror):
     # For MirrorFS, we take in "file://" url to init
     # but otherwise url is not used (assumed localhost)
     def __init__(self, url, params=None):
+        super(MSMirrorFS, self).__init__(url, params)
         p_url = self.urlparse(url)
         if p_url['scheme'] != 'file':
             raise InvalidSchemeError
@@ -166,6 +174,7 @@ class MSMirrorTCP(MSMirror):
     }
 
     def __init__(self, url, params=None):
+        super(MSMirrorTCP, self).__init__(url, params)
         p_url = self.urlparse(url)
         self.url = url
         self.params = params
@@ -238,13 +247,12 @@ class MSMirrorFTP(MSMirrorTCP):
                 files.append(fname)
                 self.f_size[os.path.join(path, fname)] = int(size)
                 self.f_mtime[os.path.join(path, fname)] = dateparser.parse(mtime)
+
         return dirs, files
 
-    #def walk(self, path):
     def walk(self):
         path = os.path.join('/', self.path)
         dirs, files = self.listdir(path)
-        #logger.debug('files : %s', files)
         yield path, dirs, files
         for d in dirs:
             #logger.debug('in path %s, parsing %s', path, d)
@@ -257,6 +265,21 @@ class MSMirrorFTP(MSMirrorTCP):
 
     def get_mtime(self, fname):
         return self.f_mtime.get(fname, -1)
+
+    def exists(self, path):
+        f_name = os.path.basename(path)
+        f_path = os.path.dirname(path)
+        (dirs, files) = listdir(f_path)
+        if f_name in files:
+            return True
+        return False
+
+    # Rename src to dest
+    def mv(self, src, dest):
+        # TODO: We need to implement an exists() here
+        # using os.path.split and listdir
+        logger.debug('moving %s to %s', src, dest)
+        self.conn.rename(os.path.join(self.path, src), os.path.join(self.path, dest))
 
 
 class MSMirrorSFTP(MSMirrorTCP, json.JSONEncoder):
@@ -276,7 +299,7 @@ class MSMirrorSFTP(MSMirrorTCP, json.JSONEncoder):
         p_url = self.urlparse(url)
         if p_url['scheme'] != 'sftp':
             raise InvalidSchemeError
-        if not params.get('key'):
+        if not params.get('key') or not os.path.isfile(params['key']):
             raise MissingCredentialsError
 
     def connect(self):
@@ -285,6 +308,7 @@ class MSMirrorSFTP(MSMirrorTCP, json.JSONEncoder):
             self.client = SSHClient()
             self.client.load_system_host_keys()
             self.client.set_missing_host_key_policy(AutoAddPolicy())
+            logger.debug('connecting to %s with key %s', self.hostname, self.params['key'])
             self.client.connect(self.hostname, key_filename=self.params['key'])
             self.conn = self.client.open_sftp()
             #logger.debug('changing directory to %s', self.path)
@@ -294,7 +318,6 @@ class MSMirrorSFTP(MSMirrorTCP, json.JSONEncoder):
             return False
 
     # https://gist.github.com/johnfink8/2190472
-    #def walk(self, path=None):
     def walk(self):
         #logger.debug('self path=%s, called path=%s', self.path, path)
         #npath = abspath_re.sub('', path)
@@ -321,13 +344,31 @@ class MSMirrorSFTP(MSMirrorTCP, json.JSONEncoder):
 
     def get_size(self, fname):
         logger.debug('checking size on %s', fname)
-        #logger.debug('%s', self.path_join(fname))
         #return self.conn.lstat(self.path_join(fname)).st_size
         return self.conn.lstat(fname).st_size
 
     def get_mtime(self, fname):
         #return self.conn.lstat(self.path_join(fname)).st_mtime
-        return self.conn.lstat(fname).st_mtime
+        return datetime.fromtimestamp(self.conn.lstat(fname).st_mtime)
+
+    # Custom FTPlib implementation of os.path.exists
+    def exists(self, path):
+        try:
+            self.conn.stat(path)
+        except IOError, e:
+            if e.errno == errno.ENOENT:
+                return False
+            raise
+        else:
+            return True
+
+    # Rename src to dest
+    def mv(self, src, dest):
+        if self.exists(dest):
+            logger.error('unable to rename %s to %s, destination already exists', src, dest)
+            return False
+        logger.debug('moving %s to %s', src, dest)
+        self.conn.rename(os.path.join(self.path, src), os.path.join(self.path, dest))
 
 
 class MSMirrorFile(Base):
@@ -338,13 +379,16 @@ class MSMirrorFile(Base):
     file = relationship('MSFile', backref='mirrors')
     mirror_id = Column(Integer, ForeignKey('mirror.id'))
     mirror = relationship('MSMirror', backref='files')
+    last_visit = Column(DateTime)
 
-    def __init__(self, src_file, src_mirror):
+    def __init__(self, src_file, src_mirror, ts=None):
         self.file = src_file
         self.mirror = src_mirror
+        self.last_visit = datetime.now() if ts is None else ts
 
     def __repr__(self):
-        return '<MSMirrorFile id=%d, file=%s, mirror=%s>' % (self.id, self.file, self.mirror)
+        return '<MSMirrorFile id=%d, file=%s, mirror=%s last_visit=%s>' % \
+                    (self.id, self.file, self.mirror, self.last_visit)
 
 
 #

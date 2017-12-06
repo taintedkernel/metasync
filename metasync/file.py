@@ -168,6 +168,17 @@ class MSFile(Base):
         for h in sorted(self.history, key=lambda x: x.timestamp):
             logger.debug('%s', h)
 
+    # Return data at specific timestamp
+    def get_history_ts(self, ts):
+        h_id = 0
+        logger.debug('checking for history of %s at time %s', self, ts)
+        while True:
+            logger.debug('found history %s', self.history[h_id])
+            if h_id + 1 >= len(self.history) or self.history[h_id + 1].timestamp > ts:
+                break
+            h_id += 1
+        return self.history[h_id].data
+
     def build_fn_diff(self, start):
         logger.info('checking %s', self)
         history = sorted(self.history, key=lambda x: x.timestamp)
