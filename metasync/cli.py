@@ -8,7 +8,7 @@ import logging
 import sys
 import os
 
-from manager import MSManager
+from metasync.manager import MSManager
 
 
 LOG_FILE = 'metasync.log'
@@ -78,28 +78,26 @@ def ep_show_history(start, end, db, path, verify, strong_verify, dedup, dry):
     mgr.build_diff(start_dt, end_dt)
 
 
-#@cli.command()
 @click.command()
 @click.argument('path')
 @click.option('--db', default=os.path.join(os.getcwd(), 'metasync.db'), help='location of database')
 @click.option('--verify', default='recurse', type=click.Choice(['none', 'path', 'recurse', 'all']))
 @click.option('--strong_verify', default=False, type=bool,
               help='recomputes hashes to verify contents unchanged (guards against data corruption)')
-@click.option('--path', help='root path for files to manage')
 @click.option('--dedup', default=False, type=bool, help='enable deduplication detection')
 @click.option('--dry', default=False, type=bool, help='dry run (no changes)')
-def ep_add_path(db, verify, strong_verify, path, dedup, dry):
-    pnames = ('path', 'verify', 'strong_verify', 'dedup', 'dry')
-    args = (path, verify, strong_verify, dedup, dry)
+def ep_add_path(path, db, verify, strong_verify, dedup, dry):
+    pnames = ('db', 'verify', 'strong_verify', 'dedup', 'dry', 'create_missing_repo')
+    args = (db, verify, strong_verify, dedup, dry, True)
     params = dict(zip(pnames, args))
 
     # Load our manager
-    mgr = MSManager(db, params)
+    mgr = MSManager(db, path, params)
     logger.info('manager loaded')
 
     repo = mgr.add_repo(path)
-    new_files = mgr.scan_new_files(path)
-    mgr.verify_add_new_files(repo, new_files)
+    new_files = mgr.scan_new_files()
+    mgr.verify_add_new_files(new_files)
 
 
 @click.command()

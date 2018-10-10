@@ -314,6 +314,10 @@ class MSManager(object):
     ### Add a new repo to DB ###
     def add_repo(self, path):
         logger.debug('creating new repo at %s', path)
+        repo = self.get_repo(path)
+        if repo:
+            logger.error('repo already exists, aborting: %s', repo)
+            return
         if not os.path.isdir(path):
             logger.error('path %s is not directory, aborting')
             return
