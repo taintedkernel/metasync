@@ -292,7 +292,7 @@ class MSMirrorSFTP(MSMirrorTCP, json.JSONEncoder):
     }
 
     DEFAULT_PORT = 22
-    DEFAULT_USER = os.environ['LOGNAME']
+    DEFAULT_USER = os.environ['USER']
 
     def __init__(self, url, params=None):
         super(MSMirrorSFTP, self).__init__(url, params)
