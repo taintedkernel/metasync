@@ -11,7 +11,7 @@ import os
 from metasync.manager import MSManager
 
 
-LOG_FILE = 'metasync.log'
+LOG_FILE = 'metasync-{date}.log'
 
 
 ### Having issues getting this working, will revisit later ###
@@ -155,7 +155,8 @@ formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(messag
 ch.setFormatter(formatter)
 logger.addHandler(ch)
 
-log_file = os.path.join(os.getcwd(), LOG_FILE)
+now = datetime.now().replace(microsecond=0).isoformat()
+log_file = os.path.join(os.getcwd(), LOG_FILE.format(date=now))
 fh = logging.FileHandler(log_file)
 fh.setLevel(logging.DEBUG)
 fh.setFormatter(formatter)
