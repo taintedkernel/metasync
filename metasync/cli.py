@@ -87,6 +87,8 @@ def ep_show_history(start, end, db, path, verify, strong_verify, dedup, dry):
 @click.option('--dedup', default=False, type=bool, help='enable deduplication detection')
 @click.option('--dry', default=False, type=bool, help='dry run (no changes)')
 def ep_add_path(path, db, verify, strong_verify, dedup, dry):
+    # TODO: will not work for a sub-path, treats as a new location and adds files
+    # despite existing in another repo
     pnames = ('db', 'verify', 'strong_verify', 'dedup', 'dry', 'create_missing_repo')
     args = (db, verify, strong_verify, dedup, dry, True)
     params = dict(zip(pnames, args))
@@ -98,6 +100,7 @@ def ep_add_path(path, db, verify, strong_verify, dedup, dry):
     repo = mgr.add_repo(path)
     new_files = mgr.scan_new_files()
     mgr.verify_add_new_files(new_files)
+    # TODO: update repo status from 'new'
 
 
 @click.command()

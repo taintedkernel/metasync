@@ -143,6 +143,19 @@ class MSManager(object):
         else:
             self.verify_files()
 
+    ### Check to see if a path is in, or a parent of a repo ###
+    # Used to verify new repos are not already present
+    def check_repo_match(self, repo_path):
+        repos = self.sasession.query(MSRepo).all()
+        for r in repos:
+            if r.path == repo_path:
+                return r
+            elif repo_path in r.path:
+                return r
+            elif r.path in repo_path:
+                return r
+        return False
+
     ### Get a repo ###
     def get_repo(self, repo_path):
         try:
@@ -188,9 +201,9 @@ class MSManager(object):
             if modified:
                 new_history = MSHistory(msfile, json.dumps(modified, cls=DefaultEncoder), self.execution)
                 self.sasession.add(new_history)
+                self.sasession.add(msfile)
 
-            msfile.show_history()
-            self.sasession.add(msfile)
+            #msfile.show_history()
             files_scanned += 1
 
         # Commit last_update and other updates
@@ -314,9 +327,9 @@ class MSManager(object):
     ### Add a new repo to DB ###
     def add_repo(self, path):
         logger.debug('creating new repo at %s', path)
-        repo = self.get_repo(path)
-        if repo:
-            logger.error('repo already exists, aborting: %s', repo)
+        existing_repo = self.check_repo_match(path)
+        if existing_repo:
+            logger.error('repo already exists, aborting: %s', existing_repo)
             return
         if not os.path.isdir(path):
             logger.error('path %s is not directory, aborting')
