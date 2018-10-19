@@ -109,7 +109,7 @@ if [ -z "$1" ]; then
     echo "[error] Destination argument required (one of [sdbackup, photography]), aborting"
     exit 1
 elif [ "$1" == "sdbackup" ]; then
-    DEST="/Volumes/SD Backup/Backup"
+    DEST="/Users/adechiaro/Backup/sdbackup"
 elif [ "$1" == "photography" ]; then
     DEST="/Volumes/Photography/SD Backup"
 else

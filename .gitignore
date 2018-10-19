@@ -2,4 +2,6 @@
 *.swo
 *.swp
 *.pyc
+*.log
 venv/
+*.egg-info/

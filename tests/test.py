@@ -566,6 +566,10 @@ def test_sftp_scan_match():
 #   <isolated_fs>/files/tmpfileXXX
 #   <isolated_fs>/flies/tmpfileYYY
 
+# test propagation of change
+# mv
+#   <isolated_fs>/files/tmpfileXXX -> tmpfileYYY
+
 def test_sftp_scan_match_rename():
     logger.info('--- running test_sftp_scan_match_rename  ---')
     runner = CliRunner()
@@ -628,6 +632,10 @@ def test_sftp_scan_match_rename():
         update_file_msg = '^.*updating missing file .*%s.* to match new .*%s.*$' % (l_test_file_path, l_new_test_file_path)
         regex = [match_found_msg, update_file_msg]
         test_log_data = _test_exitcode_logs(result, expect_warnings=True, regex=regex)
+        # TODO: These 'WARNING - <string>' matches only work when "log level"
+        # string is formatted to the this number of characters
+        # We *should* be matching on 'WARNING\s+ - <string>' instead,
+        # but Python 'in' does not work this way.
         file_missing_msg = 'WARNING - %s missing' % l_test_file_path
         assert file_missing_msg in test_log_data
         assert 'verification completed, 1 files missing' in test_log_data
@@ -639,6 +647,7 @@ def test_sftp_scan_match_rename():
         # We don't expect warnings in the call to ms_verify_update_host_files,
         # but this function checks the entire log and we do not have a mechanism
         # to test a subset of logs currently (we expected warnings above)
+        # TODO: maybe add functionality to do the above?
         test_log_data = _test_exitcode_logs(result, expect_warnings=True, regex=[renaming_msg])
 
         # Test propagation of changes
