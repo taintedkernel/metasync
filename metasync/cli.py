@@ -41,13 +41,36 @@ def ep_verify(db, verify, strong_verify, path, dedup, dry):
     # Dry-run partially works, it shouldn't update the files table
     #   but history is still changed.  We should do some sort of
     #   wrapper to prevent modifications to do it properly.
-    pnames = ('path', 'verify', 'strong_verify', 'dedup', 'dry')
+    pnames = ('verify', 'strong_verify', 'dedup', 'dry')
     #args = (path, ctx.obj['verify'], ctx.obj['strong_verify'], dedup, dry)
-    args = (path, verify, strong_verify, dedup, dry)
+    args = (verify, strong_verify, dedup, dry)
     params = dict(zip(pnames, args))
 
     # Load our manager
-    MSManager(db, params)
+    MSManager(db, path, params)
+    logger.info('manager loaded')
+
+
+@click.command()
+@click.option('--db', default=os.path.join(os.getcwd(), 'metasync.db'), help='location of database')
+@click.option('--verify_path', help='partial path to verify')
+@click.option('--strong_verify', default=False, type=bool,
+              help='recomputes hashes to verify contents unchanged (guards against data corruption)')
+@click.option('--path', help='root path for files to manage')
+@click.option('--dedup', default=False, type=bool, help='enable deduplication detection')
+@click.option('--dry', default=False, type=bool, help='dry run (no changes)')
+def ep_verify_partial(db, verify_path, strong_verify, path, dedup, dry):
+    # A better way exists, but this works for the moment
+    # Dry-run partially works, it shouldn't update the files table
+    #   but history is still changed.  We should do some sort of
+    #   wrapper to prevent modifications to do it properly.
+    pnames = ('verify', 'verify_path', 'strong_verify', 'dedup', 'dry')
+    #args = (path, ctx.obj['verify'], ctx.obj['strong_verify'], dedup, dry)
+    args = ('path', verify_path, strong_verify, dedup, dry)
+    params = dict(zip(pnames, args))
+
+    # Load our manager
+    MSManager(db, path, params)
     logger.info('manager loaded')
 
 
@@ -63,13 +86,13 @@ def ep_verify(db, verify, strong_verify, path, dedup, dry):
 @click.option('--dedup', default=False, type=bool, help='enable deduplication detection')
 @click.option('--dry', default=False, type=bool, help='dry run (no changes)')
 def ep_show_history(start, end, db, path, verify, strong_verify, dedup, dry):
-    pnames = ('path', 'verify', 'strong_verify', 'dedup', 'dry')
+    pnames = ('verify', 'strong_verify', 'dedup', 'dry')
     #args = (path, ctx.obj['verify'], ctx.obj['strong_verify'], dedup, dry)
-    args = (path, verify, strong_verify, dedup, dry)
+    args = (verify, strong_verify, dedup, dry)
     params = dict(zip(pnames, args))
 
     # Load our manager
-    mgr = MSManager(db, params)
+    mgr = MSManager(db, path, params)
     logger.info('manager loaded')
 
     start_dt = dateutil.parser.parse(start)
@@ -89,8 +112,8 @@ def ep_show_history(start, end, db, path, verify, strong_verify, dedup, dry):
 def ep_add_path(path, db, verify, strong_verify, dedup, dry):
     # TODO: will not work for a sub-path, treats as a new location and adds files
     # despite existing in another repo
-    pnames = ('db', 'verify', 'strong_verify', 'dedup', 'dry', 'create_missing_repo')
-    args = (db, verify, strong_verify, dedup, dry, True)
+    pnames = ('verify', 'strong_verify', 'dedup', 'dry', 'create_missing_repo')
+    args = (verify, strong_verify, dedup, dry, True)
     params = dict(zip(pnames, args))
 
     # Load our manager
@@ -113,7 +136,7 @@ def ep_add_mirror(host, key, db):
     params = dict(zip(pnames, args))
 
     # Load our manager
-    mgr = MSManager(db, params)
+    mgr = MSManager(db, path, params)
     logger.info('manager loaded')
 
     credentials = {'key': key} if key else {}
@@ -130,7 +153,7 @@ def ep_walk_scan_mirror(host, path, db):
     params = dict(zip(pnames, args))
 
     # Load our manager
-    mgr = MSManager(db, params)
+    mgr = MSManager(db, path, params)
     logger.info('manager loaded')
 
     mgr.walk_scan_mirror(host, path)

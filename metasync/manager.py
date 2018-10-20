@@ -178,6 +178,13 @@ class MSManager(object):
         #    verify_files = filter(lambda x: os.path.samefile(path, x.file_path), self.existing_files)
         #elif self.params.get('verify') == 'recurse':
         #    verify_files = filter(lambda x: path in x.file_path, self.existing_files)
+        elif self.params.get('verify') == 'path':
+            verify_path = self.params.get('verify_path')
+            if not verify_path or not os.path.isdir(verify_path):
+                logger.fatal('partial verify path %s invalid, aborting', verify_path)
+                return
+            logger.info('invoked with partial verify on %s', verify_path)
+            verify_files = filter(lambda x: verify_path in x.local_file_path, self.existing_files)
         else:
             logger.error('invoked with invalid verify=%s, defaulting to all files', self.params.get('verify'))
             verify_files = self.existing_files

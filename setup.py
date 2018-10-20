@@ -21,6 +21,7 @@ setup(
     entry_points='''
         [console_scripts]
         ms_verify=metasync.cli:ep_verify
+        ms_verify_partial=metasync.cli:ep_verify_partial
         ms_show_history=metasync.cli:ep_show_history
         ms_add_path=metasync.cli:ep_add_path
         ms_add_mirror=metasync.cli:ep_add_mirror
