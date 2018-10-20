@@ -192,6 +192,7 @@ class MSManager(object):
         logger.info('%d total files found, %d to be scanned', len(self.existing_files), len(verify_files))
         files_scanned = 0
 
+        verify_start = datetime.now()
         for msfile in verify_files:
             logger.debug('visiting [%d/%d] %s', files_scanned + 1, len(verify_files), msfile.filename)
 
@@ -215,6 +216,7 @@ class MSManager(object):
 
         # Commit last_update and other updates
         self.sasession.commit()
+        verify_time = datetime.now() - verify_start
 
         ### UNIT TEST ###
         if len(self.missing_files) == 0:
@@ -222,6 +224,7 @@ class MSManager(object):
         else:
             logger.info('verification completed, %d files missing', len(self.missing_files))
         ### END ###
+        logger.info('%d files in %s (%.1fms per file)', len(verify_files), verify_time, verify_time.total_seconds() / len(verify_files) * 1000)
 
         return len(self.missing_files)
 
