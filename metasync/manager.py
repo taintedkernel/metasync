@@ -5,6 +5,11 @@ from sqlalchemy import create_engine, orm
 import click
 #import click_log
 
+import cProfile
+import StringIO
+import pstats
+import contextlib
+
 try:
     import simplejson as json
 except ImportError:
@@ -39,6 +44,20 @@ logger = logging.getLogger(__name__)
 
 class NoRepoError(Exception):
     pass
+
+
+@contextlib.contextmanager
+def profiled():
+    pr = cProfile.Profile()
+    pr.enable()
+    yield
+    pr.disable()
+    s = StringIO.StringIO()
+    ps = pstats.Stats(pr, stream=s).sort_stats('cumulative')
+    ps.print_stats()
+    # uncomment this to see who's calling what
+    # ps.print_callers()
+    print(s.getvalue())
 
 
 ########################
@@ -174,6 +193,7 @@ class MSManager(object):
             return
         elif self.params.get('verify') == 'all' or not path:
             verify_files = self.existing_files
+        # TODO: what are these for?
         #elif self.params.get('verify') == 'path':
         #    verify_files = filter(lambda x: os.path.samefile(path, x.file_path), self.existing_files)
         #elif self.params.get('verify') == 'recurse':
@@ -247,7 +267,7 @@ class MSManager(object):
         logger.info('starting new file scan on %s', path)
         files_parsed = files_skipped = total_files = 0
         new_files = list()
-        #known_files = self.existing_files
+        known_files = set([row[0] for row in self.sasession.query(MSFile.filename).yield_per(100)])
 
         # Walk through filesystem
         # Iterate over files, checking if new or existing
@@ -265,9 +285,9 @@ class MSManager(object):
                 filename = os.path.relpath(os.path.join(root, name), self.repo.path)
                 logger.info('checking [%d/%d]: %s', files_parsed + 1, total_files, filename)
 
-                existing_file = self.get_db_file(filename)
-                if existing_file:
+                if filename in known_files:
                     logger.info('file exists, skipping')
+                    known_files.remove(filename)
                     files_skipped += 1
                 else:
                     logger.info('file new, marking for addition')
@@ -306,6 +326,7 @@ class MSManager(object):
                         #new_history = missing_file.update(data)
                         self.sasession.add(missing_file)
                         self.sasession.add(new_history)
+                        # TODO: change to flush?
                         self.sasession.commit()
                         missing_file.show_history()
                     continue

@@ -18,7 +18,7 @@ LOG_FILE = 'metasync-{date}.log'
 #@click.group()
 #@click.pass_context
 #@click.option('--db', default=os.path.join(os.getcwd(), 'metasync.db'), help='location of database')
-#@click.option('--verify', default='recurse', type=click.Choice(['none', 'path', 'recurse', 'all']))
+#@click.option('--verify', default='all', type=click.Choice(['none', 'path', 'recurse', 'all']))
 #@click.option('--strong_verify', default=False, type=bool,
 #              help='recomputes hashes to verify contents unchanged (guards against data corruption)')
 #def cli(ctx, db, verify, strong_verify):
@@ -29,14 +29,14 @@ LOG_FILE = 'metasync-{date}.log'
 
 #@click.pass_context
 @click.command()
+@click.argument('path')
 @click.option('--db', default=os.path.join(os.getcwd(), 'metasync.db'), help='location of database')
 @click.option('--verify', default='all', type=click.Choice(['none', 'path', 'recurse', 'all']))
 @click.option('--strong_verify', default=False, type=bool,
               help='recomputes hashes to verify contents unchanged (guards against data corruption)')
-@click.option('--path', help='root path for files to manage')
 @click.option('--dedup', default=False, type=bool, help='enable deduplication detection')
 @click.option('--dry', default=False, type=bool, help='dry run (no changes)')
-def ep_verify(db, verify, strong_verify, path, dedup, dry):
+def ep_verify(path, db, verify, strong_verify, dedup, dry):
     # A better way exists, but this works for the moment
     # Dry-run partially works, it shouldn't update the files table
     #   but history is still changed.  We should do some sort of
@@ -52,18 +52,14 @@ def ep_verify(db, verify, strong_verify, path, dedup, dry):
 
 
 @click.command()
+@click.argument('path')
 @click.option('--db', default=os.path.join(os.getcwd(), 'metasync.db'), help='location of database')
 @click.option('--verify_path', help='partial path to verify')
 @click.option('--strong_verify', default=False, type=bool,
               help='recomputes hashes to verify contents unchanged (guards against data corruption)')
-@click.option('--path', help='root path for files to manage')
 @click.option('--dedup', default=False, type=bool, help='enable deduplication detection')
 @click.option('--dry', default=False, type=bool, help='dry run (no changes)')
-def ep_verify_partial(db, verify_path, strong_verify, path, dedup, dry):
-    # A better way exists, but this works for the moment
-    # Dry-run partially works, it shouldn't update the files table
-    #   but history is still changed.  We should do some sort of
-    #   wrapper to prevent modifications to do it properly.
+def ep_verify_partial(path, db, verify_path, strong_verify, dedup, dry):
     pnames = ('verify', 'verify_path', 'strong_verify', 'dedup', 'dry')
     #args = (path, ctx.obj['verify'], ctx.obj['strong_verify'], dedup, dry)
     args = ('path', verify_path, strong_verify, dedup, dry)
@@ -75,17 +71,16 @@ def ep_verify_partial(db, verify_path, strong_verify, path, dedup, dry):
 
 
 @click.command()
+@click.argument('path')
 @click.argument('start')
 @click.option('--end', default=datetime.now().strftime('%c'))
 @click.option('--db', default=os.path.join(os.getcwd(), 'metasync.db'), help='location of database')
-@click.option('--path', help='root path for files to manage')
 @click.option('--verify', default='all', type=click.Choice(['none', 'path', 'recurse', 'all']))
 @click.option('--strong_verify', default=False, type=bool,
               help='recomputes hashes to verify contents unchanged (guards against data corruption)')
-@click.option('--path', help='root path for files to manage')
 @click.option('--dedup', default=False, type=bool, help='enable deduplication detection')
 @click.option('--dry', default=False, type=bool, help='dry run (no changes)')
-def ep_show_history(start, end, db, path, verify, strong_verify, dedup, dry):
+def ep_show_history(path, start, end, db, verify, strong_verify, dedup, dry):
     pnames = ('verify', 'strong_verify', 'dedup', 'dry')
     #args = (path, ctx.obj['verify'], ctx.obj['strong_verify'], dedup, dry)
     args = (verify, strong_verify, dedup, dry)
@@ -101,17 +96,16 @@ def ep_show_history(start, end, db, path, verify, strong_verify, dedup, dry):
     mgr.build_diff(start_dt, end_dt)
 
 
+# Create repo / add path
 @click.command()
 @click.argument('path')
 @click.option('--db', default=os.path.join(os.getcwd(), 'metasync.db'), help='location of database')
-@click.option('--verify', default='recurse', type=click.Choice(['none', 'path', 'recurse', 'all']))
+@click.option('--verify', default='all', type=click.Choice(['none', 'path', 'recurse', 'all']))
 @click.option('--strong_verify', default=False, type=bool,
               help='recomputes hashes to verify contents unchanged (guards against data corruption)')
 @click.option('--dedup', default=False, type=bool, help='enable deduplication detection')
 @click.option('--dry', default=False, type=bool, help='dry run (no changes)')
 def ep_add_path(path, db, verify, strong_verify, dedup, dry):
-    # TODO: will not work for a sub-path, treats as a new location and adds files
-    # despite existing in another repo
     pnames = ('verify', 'strong_verify', 'dedup', 'dry', 'create_missing_repo')
     args = (verify, strong_verify, dedup, dry, True)
     params = dict(zip(pnames, args))
@@ -123,7 +117,29 @@ def ep_add_path(path, db, verify, strong_verify, dedup, dry):
     repo = mgr.add_repo(path)
     new_files = mgr.scan_new_files()
     mgr.verify_add_new_files(new_files)
-    # TODO: update repo status from 'new'
+    repo.set_valid()
+
+
+# Update repo / path
+@click.command()
+@click.argument('path')
+@click.option('--db', default=os.path.join(os.getcwd(), 'metasync.db'), help='location of database')
+@click.option('--verify', default='all', type=click.Choice(['none', 'path', 'recurse', 'all']))
+@click.option('--strong_verify', default=False, type=bool,
+              help='recomputes hashes to verify contents unchanged (guards against data corruption)')
+@click.option('--dedup', default=False, type=bool, help='enable deduplication detection')
+@click.option('--dry', default=False, type=bool, help='dry run (no changes)')
+def ep_update_path(path, db, verify, strong_verify, dedup, dry):
+    pnames = ('verify', 'strong_verify', 'dedup', 'dry')
+    args = (verify, strong_verify, dedup, dry)
+    params = dict(zip(pnames, args))
+
+    # Load our manager
+    mgr = MSManager(db, path, params)
+    logger.info('manager loaded')
+
+    new_files = mgr.scan_new_files()
+    mgr.verify_add_new_files(new_files)
 
 
 @click.command()

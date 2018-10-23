@@ -39,3 +39,6 @@ class MSRepo(Base):
     def __init__(self, path):
         self.path = path
         self.status = 'new'
+
+    def set_valid(self):
+        self.status = 'valid'
