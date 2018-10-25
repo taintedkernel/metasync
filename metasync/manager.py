@@ -305,7 +305,7 @@ class MSManager(object):
     # Then compare against existing known files (dedup detection, if enabled)
     def verify_add_new_files(self, new_files):
         logger.info('starting verify/add new files')
-        for new_fn in new_files:
+        for idx, new_fn in enumerate(new_files):
 
             # Check against missing files
             # TODO: same logic as dupes, combine them: one missing, one existing
@@ -348,9 +348,16 @@ class MSManager(object):
                     continue
 
             # If no other match, then assume new
-            if self.check_file_eligable(new_fn):
+            if self.check_file_eligable(new_fn, repo_path=True):
                 if not self.params.get('dry', False):
                     self.add_file(new_fn, delay_commit=True)
+                    logger.info('added %s [%d/%d]', new_fn, idx, len(new_files))
+            else:
+                logger.warning('file %s ineligable, skipping', new_fn)
+
+            if idx % 100 == 0:
+                logger.debug('committing results')
+                self.sasession.commit()
 
         self.sasession.commit()
         logger.info('verify/add new files complete')
@@ -361,10 +368,11 @@ class MSManager(object):
         existing_repo = self.check_repo_match(path)
         if existing_repo:
             logger.error('repo already exists, aborting: %s', existing_repo)
-            return
+            sys.exit(1)
+
         if not os.path.isdir(path):
             logger.error('path %s is not directory, aborting')
-            return
+            sys.exit(1)
 
         repo = MSRepo(path)
         self.sasession.add(repo)
@@ -379,7 +387,6 @@ class MSManager(object):
         new_history = MSHistory(new_file, new_file.to_json(), self.execution, status='new')
         if not self.params.get('dry', False):
             self.sasession.add(new_history)
-        logger.info('added %s', new_file)
         if not delay_commit:
             self.sasession.commit()
         self.existing_files.append(new_file)
@@ -457,7 +464,7 @@ class MSManager(object):
     # Check if file is eligable for adding to DB
     # Consists of several checks:
     #  - Is it in ignore list?
-    def check_file_eligable(self, filepath):
+    def check_file_eligable(self, filepath, repo_path=False):
         # Abort on first failure
         for regex in self.ignored_files:
             if re.match(regex, filepath):
@@ -465,6 +472,18 @@ class MSManager(object):
 
         # TODO: check other things here
         # If passes all, then good for adding
+        if repo_path:
+            path = os.path.join(self.repo.path, filepath)
+        else:
+            path = filepath
+
+        if not os.path.isfile(path):
+            return False
+
+        # TODO: do we have option to support links?
+        if os.path.islink(path):
+            return False
+
         return True
 
     ### Mirror functions ###
@@ -648,3 +667,9 @@ class MSManager(object):
 
         mirror.last_visit = datetime.now()
         self.sasession.add(mirror)
+
+
+    def shutdown(self):
+        logger.info('shutting down...')
+        self.sasession.commit()
+

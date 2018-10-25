@@ -114,10 +114,12 @@ def ep_add_path(path, db, verify, strong_verify, dedup, dry):
     mgr = MSManager(db, path, params)
     logger.info('manager loaded')
 
-    repo = mgr.add_repo(path)
+    #repo = mgr.add_repo(path)
     new_files = mgr.scan_new_files()
+    logger.info('%d new files found', len(new_files))
     mgr.verify_add_new_files(new_files)
-    repo.set_valid()
+    mgr.repo.set_valid()
+    mgr.shutdown()
 
 
 # Update repo / path

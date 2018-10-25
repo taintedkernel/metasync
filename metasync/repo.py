@@ -40,5 +40,8 @@ class MSRepo(Base):
         self.path = path
         self.status = 'new'
 
+    def __str__(self):
+        return '<repo status=%s path=%s added=%s>' % (self.status, self.path, self.date_added)
+
     def set_valid(self):
         self.status = 'valid'
